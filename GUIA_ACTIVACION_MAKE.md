@@ -4,7 +4,7 @@ Reemplaza la guía anterior (`Make wompi setup.py`) y el diseño con Google Shee
 
 ## Reglas que garantiza
 
-- **Un código = un equipo.** El primer canje liga el código al identificador de ese PC; en cualquier otro PC el código se rechaza. El mismo PC puede repetir el canje (reinstalar la app) sin extender la vigencia.
+- **Un código = hasta 3 equipos.** Cada canje en un PC nuevo agrega su identificador al campo `machine` (separados por coma). Un cuarto PC se rechaza con `used`. El mismo PC puede repetir el canje (reinstalar la app) sin extender la vigencia. Los códigos de FileSync Pro (planes `fs-…`), que comparten este escenario, siguen limitados a 1 equipo.
 - **Cada equipo necesita su propio código**, generado al azar. Un pago incluye los códigos que decidas (por defecto 1).
 - **Atado al email.** El código solo sirve en una cuenta con el mismo email del pago.
 - **Nada sensible circula:** la app envía solo el hash del código + el hash del equipo; Make nunca ve el código ni el email de la cuenta, y no hay hoja pública.
@@ -58,7 +58,7 @@ Crea en Wompi un link de pago por cada fila (con ese monto exacto) y pon sus URL
    {{sha256(codigo + "|" + lower(trim(1.data.transaction.customer_email)); "hex")}}
    ```
 4. **Data store: Add/replace a record** en `CipherVault_codigos`: clave = `code_hash`; `plan` = `premium`; `reference` = `{{1.data.transaction.reference}}`; `meses` = el de la rama (1, 12 o 1200); `created_at` = `{{formatDate(now; "YYYY-MM-DDTHH:mm:ss")}}`; `machine` y `used_at` vacíos.
-5. **Text aggregator** (agrupa los códigos del Repeater) → **Gmail: Send an Email** al `customer_email` con cada código (formato `XXXX-XXXX-XXXX-XXXX`: `{{substring(codigo; 0; 4)}}-{{substring(codigo; 4; 4)}}-…`) y las instrucciones: «Instala CipherVault en el equipo, inicia sesión con la cuenta de este email → Activar licencia → pega UN código. Cada código sirve para un solo equipo».
+5. **Text aggregator** (agrupa los códigos del Repeater) → **Gmail: Send an Email** al `customer_email` con cada código (formato `XXXX-XXXX-XXXX-XXXX`: `{{substring(codigo; 0; 4)}}-{{substring(codigo; 4; 4)}}-…`) y las instrucciones: «Instala CipherVault en el equipo, inicia sesión con la cuenta de este email → Activar licencia → pega el código. Sirve hasta en 3 equipos tuyos».
 6. Al final: **Add a record** en `CipherVault_pagos` con la referencia.
 
 Pon el correo **después** de guardar el registro en el Data Store, para que nunca se envíe un código que no exista.
@@ -72,9 +72,9 @@ Crea un escenario nuevo y **actívalo con ejecución inmediata**. En sus ajustes
 | Condición | Acción | Respuesta (Webhook response, `Content-Type: application/json`) |
 |---|---|---|
 | El registro no existe | — | `{"ok":false,"error":"invalid"}` |
-| `machine` vacío | **Update record**: `machine = {{1.machine}}`, `used_at = {{formatDate(now; "YYYY-MM-DDTHH:mm:ss")}}` | respuesta OK (abajo) |
-| `machine = {{1.machine}}` | — | respuesta OK (abajo) |
-| `machine` distinto | — | `{"ok":false,"error":"used"}` |
+| `machine` vacío, o equipo nuevo con cupo (`machine` no contiene `{{1.machine}}`, plan no empieza por `fs-` y `length(split(machine; ","))` < 3) | **Update record**: `machine = {{if(5.machine; 5.machine + "," + 1.machine; 1.machine)}}` (y `used_at` solo la primera vez) | respuesta OK (abajo) |
+| `machine` contiene `{{1.machine}}` (equipo ya registrado) | — | respuesta OK (abajo) |
+| Equipo nuevo sin cupo (3 equipos, o 1 si es un plan `fs-` de FileSync) | — | `{"ok":false,"error":"used"}` |
 
 **Respuesta OK** (reemplaza `TU_SECRETO` por el mismo valor de `CIPHERVAULT_ACTIVATION_SECRET`; `2.` es el registro del Data Store):
 
@@ -98,7 +98,7 @@ La firma debe calcularse exactamente con esos campos y en ese orden, unidos por 
 1. Crea una cuenta de prueba con tu email y haz un pago mínimo (sandbox o real).
 2. Comprueba que llegó el correo con el código y que el Data Store tiene el registro con `machine` vacío.
 3. En la app: Activar licencia → pega el código → debe mostrar el plan y el vencimiento; el registro ahora tiene `machine` y `used_at`.
-4. En **otro** PC (o con otra cuenta de Windows y otro equipo), con el mismo email: el mismo código debe dar «ya fue usado en otro equipo».
+4. Actívalo en un segundo y un tercer PC con el mismo email: debe funcionar. En un **cuarto** PC debe responder «ya está activado en 3 equipos».
 5. Un código mal escrito debe rechazarse.
 
 ## 5. Proteger el webhook de pagos (muy recomendable)
@@ -107,7 +107,7 @@ La URL del Escenario A es su única barrera: cualquiera que la conozca puede man
 
 ## 6. Cambio de PC y soporte
 
-Si un cliente cambia de computador (o reinstala Windows y cambia su identificador), el código sigue ligado al equipo anterior: en el Data Store, abre su registro y **vacía el campo `machine`**; podrá canjearlo de nuevo en el PC nuevo. El plan activo en el PC viejo seguirá funcionando hasta su vencimiento, así que conviene hacerlo solo cuando el cliente lo pida.
+Si un cliente ya usó sus 3 equipos y cambia uno de ellos (o reinstala Windows y cambia su identificador), abre su registro en el Data Store y **borra del campo `machine` el identificador del PC viejo** (o vacía el campo entero). Podrá canjearlo de nuevo en el PC nuevo. El plan activo en el PC viejo seguirá funcionando hasta su vencimiento, así que conviene hacerlo solo cuando el cliente lo pida.
 
 ## 7. Después de migrar
 

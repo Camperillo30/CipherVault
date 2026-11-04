@@ -172,7 +172,7 @@ SECRET = gcs.ACTIVATION_SECRET
 
 
 class FakeMake:
-    """Imita el escenario de Make: Data Store de códigos, un código = un equipo, respuesta firmada."""
+    """Imita el escenario de Make: Data Store de códigos, un código = hasta 3 equipos, respuesta firmada."""
 
     def __init__(self):
         self.store = {}
@@ -181,16 +181,17 @@ class FakeMake:
     def add(self, email="ana@example.com", code=CODE, plan="basic", ref="WOMPI-1", meses="1", created=None):
         created = created or datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         self.store[LAM.code_hash(code, email)] = dict(plan=plan, reference=ref, meses=meses,
-                                                     created_at=created, machine=None)
+                                                     created_at=created, machines=[])
 
     def __call__(self, payload):
         self.requests.append(payload)
         rec = self.store.get(payload["code_hash"])
         if rec is None:
             return {"ok": False, "error": "invalid"}
-        if rec["machine"] not in (None, payload["machine"]):
-            return {"ok": False, "error": "used"}
-        rec["machine"] = payload["machine"]
+        if payload["machine"] not in rec["machines"]:
+            if len(rec["machines"]) >= gcs.MAX_DEVICES:
+                return {"ok": False, "error": "used"}
+            rec["machines"].append(payload["machine"])
         out = {"ok": True, **{k: rec[k] for k in ("plan", "reference", "meses", "created_at")}}
         out["sig"] = LAM.response_signature(payload["code_hash"], payload["machine"], payload["nonce"],
                                             rec["plan"], rec["reference"], rec["meses"], rec["created_at"], SECRET)
@@ -254,14 +255,16 @@ def test_codigo_developer_firmado(app, make):
         assert gcs.compute_effective_version(user)[0] == "free"
 
 
-def test_codigo_de_un_solo_equipo(app, make, monkeypatch):
+def test_codigo_hasta_tres_equipos(app, make, monkeypatch):
     make.add()
     make_user(app)
-    LAM.redeem(CODE, "ana", "ana@example.com")                       # equipo A: se liga
-    monkeypatch.setattr(gcs, "machine_id", lambda: "equipo-B")                              # otro PC, misma cuenta/email
-    with pytest.raises(gcs.ActivationError, match="otro equipo"):
+    for pc in ("equipo-A", "equipo-B", "equipo-C"):                  # tres PC de la misma persona
+        monkeypatch.setattr(gcs, "machine_id", lambda pc=pc: pc)
         LAM.redeem(CODE, "ana", "ana@example.com")
-    monkeypatch.setattr(gcs, "machine_id", lambda: "equipo-A")                              # el equipo A puede repetir
+    monkeypatch.setattr(gcs, "machine_id", lambda: "equipo-D")        # el cuarto se rechaza
+    with pytest.raises(gcs.ActivationError, match="3 equipos"):
+        LAM.redeem(CODE, "ana", "ana@example.com")
+    monkeypatch.setattr(gcs, "machine_id", lambda: "equipo-A")        # un equipo ya registrado puede repetir
     assert LAM.redeem(CODE, "ana", "ana@example.com")["already"]
 
 
@@ -544,11 +547,12 @@ def test_reparacion_no_sirve_en_otro_equipo(app, make, monkeypatch):
     make.add(plan="premium", meses="1", ref="R1")
     make_user(app)
     LAM.redeem(CODE, "ana", "ana@example.com")
-    monkeypatch.setattr(gcs, "machine_id", lambda: "equipo-B")   # base copiada a otro PC
+    make.store[next(iter(make.store))]["machines"] += ["equipo-X", "equipo-Y"]   # ya tiene sus 3 equipos
+    monkeypatch.setattr(gcs, "machine_id", lambda: "equipo-B")   # base copiada a un cuarto PC
     with gcs.db() as conn:
         user = gcs.get_user_by_name(conn, "ana")
     assert gcs.compute_effective_version(user)[2] == "tampered"
-    with pytest.raises(gcs.ActivationError, match="otro equipo"):
+    with pytest.raises(gcs.ActivationError, match="3 equipos"):
         LAM.repair(user["id"])
     with gcs.db() as conn:
         user = gcs.get_user_by_name(conn, "ana")

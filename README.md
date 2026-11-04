@@ -106,7 +106,7 @@ No distribuyas: `.env`, `developer.license`, `dev_credentials.json`, `desktop_ru
 
 ## Licencias y planes
 
-Flujo de compra: la app abre el Payment Link de Wompi → Make genera un **código aleatorio por equipo**, lo envía por correo y guarda solo su hash → el cliente lo pega en «Activar licencia» → la app lo canjea contra un webhook de Make, que lo marca como usado por ese equipo y devuelve el plan firmado. **Un código sirve para un solo equipo y un solo email**; otro equipo necesita otro código. La vigencia se cuenta desde la fecha del pago, y la licencia local queda atada al PC (copiar la base de datos a otro equipo no la conserva). Pasos de Make en `GUIA_ACTIVACION_MAKE.md`.
+Flujo de compra: la app abre el Payment Link de Wompi → Make genera un **código aleatorio**, lo envía por correo y guarda solo su hash → el cliente lo pega en «Activar licencia» → la app lo canjea contra un webhook de Make, que registra ese equipo en el código y devuelve el plan firmado. **Un código sirve para un solo email y hasta 3 equipos** (por ejemplo, PC de la casa, portátil y PC del trabajo); un cuarto equipo se rechaza. La vigencia se cuenta desde la fecha del pago, y la licencia local queda atada al PC (copiar la base de datos a otro equipo no la conserva). Pasos de Make en `GUIA_ACTIVACION_MAKE.md`.
 
 | Plan | Contraseñas | Análisis, categorías y 2FA | Exportar | Respaldo automático | Precio |
 |---|---|---|---|---|---|
@@ -128,7 +128,7 @@ La prueba gratuita guarda su fecha de inicio en tres sitios (archivo, base de da
 ## Detalles técnicos destacados
 
 - **Una sola derivación de clave por inicio de sesión.** PBKDF2-HMAC-SHA256 a 600.000 iteraciones produce la clave de la bóveda, y la contraseña maestra se verifica con un HMAC de esa clave (formato `v3$`). Así no se guarda ni la clave ni un hash reutilizable, y las cuentas de formatos anteriores se migran solas al entrar.
-- **Licencias que no se pueden compartir.** Cada pago genera un código aleatorio del que el servidor solo guarda el hash. El código se liga al primer equipo que lo canjea (identificador derivado del `MachineGuid` de Windows), y la respuesta viene firmada con un *nonce* para que no se pueda reutilizar en otro equipo. El plan guardado en la base local lleva un sello HMAC atado al equipo.
+- **Licencias que no se pueden compartir.** Cada pago genera un código aleatorio del que el servidor solo guarda el hash. El código se liga a los equipos que lo canjean, hasta 3 (identificador derivado del `MachineGuid` de Windows), y la respuesta viene firmada con un *nonce* para que no se pueda reutilizar en otro equipo. El plan guardado en la base local lleva un sello HMAC atado al equipo.
 - **El `.exe` no se puede convertir en modo desarrollador.** `CipherVault.spec` se niega a compilar si la configuración trae credenciales de desarrollador, y la app compilada ignora variables de entorno, `.env` y archivos JSON sueltos.
 - **Prueba gratuita difícil de reiniciar.** La fecha de inicio se guarda en tres sitios (archivo, base de datos y registro de Windows) y la app detecta si se atrasa el reloj.
 - **77 pruebas automáticas**, incluidas pruebas de humo de la interfaz real con Tk que corren sin pantalla (Xvfb). Windows Hello y la auto-escritura se prueban con dobles (la parte que depende del hardware se prueba a mano en Windows).

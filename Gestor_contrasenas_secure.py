@@ -339,8 +339,8 @@ REDEEMABLE_PLANS = frozenset({"basic", "premium", "equipo", "developer"})
 
 # ──────────────────────────────────────────────
 #  SERVICIO DE ACTIVACIÓN — escenario de Make (webhook con respuesta)
-#  La app envía el hash del código + el identificador del equipo; Make marca el
-#  código como usado por ese equipo (un código = un equipo) y responde el plan
+#  La app envía el hash del código + el identificador del equipo; Make registra ese
+#  equipo en el código (un código sirve en hasta MAX_DEVICES equipos) y responde el plan
 #  firmado con el secreto compartido. Sin URL configurada la activación queda
 #  deshabilitada (no hay valor por defecto).
 # ──────────────────────────────────────────────
@@ -349,6 +349,9 @@ ACTIVATION_URL = _env_str("CIPHERVAULT_ACTIVATION_URL", "")
 EXTENSION_IDS = _env_list("CIPHERVAULT_EXTENSION_IDS")
 ACTIVATION_SECRET = _env_str("CIPHERVAULT_ACTIVATION_SECRET", "")
 ACTIVATION_TIMEOUT = 12   # segundos
+# Equipos (PC) en los que se puede activar un mismo código. El límite real lo aplica el
+# escenario de canje de Make; este valor solo se usa en los textos de la app.
+MAX_DEVICES = 3
 
 # ──────────────────────────────────────────────
 #  RUTAS DE ARCHIVOS LOCALES
@@ -767,10 +770,11 @@ def set_user_license(conn: sqlite3.Connection, username: str, plan: str,
 
 class LicenseActivationManager:
     """
-    Canje de códigos de activación de UN SOLO USO, atados a un equipo.
+    Canje de códigos de activación, atados a los equipos (PC) del comprador: un código sirve
+    en hasta MAX_DEVICES equipos.
 
     Make guarda por cada código (Data Store): code_hash | plan | reference | meses |
-    created_at | machine | used_at, donde
+    created_at | machine | used_at, donde `machine` es la lista de equipos separados por coma y
       code_hash = SHA-256( CODIGO_SIN_GUIONES_EN_MAYUSCULAS + "|" + email_en_minusculas )
 
     La app NO envía el código ni el email: solo code_hash + el identificador del equipo
@@ -778,10 +782,9 @@ class LicenseActivationManager:
     firma `sig` (SHA-256 con el secreto compartido) liga la respuesta a ese code_hash,
     equipo y nonce, así que no se puede reutilizar una respuesta en otro equipo ni
     falsificarla sin conocer el secreto.
-      · primer canje  → el código queda ligado a ese equipo
-      · otro equipo   → {"ok": false, "error": "used"}
-      · mismo equipo  → se permite repetir (reinstalar la app) sin extender la vigencia
-    Un código = un equipo; para otro equipo hay que comprar/recibir otro código.
+      · equipo nuevo con cupo  → se agrega a la lista del código (máx. MAX_DEVICES)
+      · equipo ya registrado   → se permite repetir (reinstalar la app) sin extender la vigencia
+      · equipo nuevo sin cupo  → {"ok": false, "error": "used"}
     Ver GUIA_ACTIVACION_MAKE.md para configurar Make.
     """
 
@@ -810,8 +813,9 @@ class LicenseActivationManager:
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     ERROR_MESSAGES = {
-        "used": "Este código ya fue usado en otro equipo. Cada código sirve para un solo equipo: "
-                "para activar otro equipo necesitas otro código (escribe a soporte si cambiaste de PC).",
+        "used": f"Este código ya está activado en {MAX_DEVICES} equipos, que es el máximo por licencia. "
+                "Si cambiaste de computador, escribe a soporte para liberar uno de los anteriores; "
+                "para más equipos necesitas otra licencia.",
         "invalid": "Ese código no es válido para esta cuenta. Revisa que lo copiaste completo y que "
                    "tu cuenta usa el mismo email con el que pagaste. Si pagaste hace pocos minutos, "
                    "espera un momento y vuelve a intentar.",
@@ -2364,7 +2368,7 @@ class CipherVaultApp:
 
         body = self._card(win, padx=24, pady=18)
         body.pack(fill="x", padx=24, pady=14)
-        self._label(body, "Pega el código que te enviamos por correo después de pagar (sirve para un solo equipo):",
+        self._label(body, f"Pega el código que te enviamos por correo después de pagar (sirve hasta en {MAX_DEVICES} equipos tuyos):",
                     color=C["text"], font_size=10).pack(anchor="w", pady=(0, 8))
         code_var = tk.StringVar()
         entry = ttk.Entry(body, textvariable=code_var, font=("Consolas", 13), width=30)
@@ -3547,10 +3551,10 @@ class CipherVaultApp:
         warn.pack(fill="x", pady=(0, 14))
         if user_email:
             warn_text = (f"⚠️ IMPORTANTE: paga con este email exacto:\n{user_email}\n"
-                         "Cada código sirve para esta cuenta y para UN solo equipo.")
+                         f"El código sirve para esta cuenta, hasta en {MAX_DEVICES} equipos.")
         else:
             warn_text = ("⚠️ IMPORTANTE: paga con el MISMO email de tu cuenta de CipherVault.\n"
-                         "Cada código sirve para esa cuenta y para UN solo equipo.")
+                         f"El código sirve para esa cuenta, hasta en {MAX_DEVICES} equipos.")
         tk.Label(warn, text=warn_text, font=("Segoe UI", 10, "bold"),
                  bg=C["warning"], fg="#000000", justify="left").pack(anchor="w")
 

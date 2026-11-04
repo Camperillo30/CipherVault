@@ -296,8 +296,8 @@ def build_emergency_kit_pdf(username: str, email: str, data_folder: str,
         "usa «Exportar bóveda» (.cvault) y luego «Importar» en el equipo nuevo.",
         "Haz una exportación .cvault de vez en cuando y guárdala en una memoria USB. Anota "
         "también la contraseña de esa exportación.",
-        "La licencia se activa con el código que llega a tu email. Para pasar la licencia a "
-        "otro equipo escribe a soporte.",
+        "La licencia se activa con el código que llega a tu email y sirve hasta en 3 de tus "
+        "equipos. Si cambias de computador y ya usaste los 3, escribe a soporte.",
     ):
         lines = _wrap(item, 88)
         text(60, 10, "-")
