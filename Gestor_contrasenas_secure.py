@@ -387,8 +387,9 @@ BASE_PATH = os.path.dirname(os.path.abspath(__file__))
 
 
 def _get_data_path() -> Path:
-    """Ubicación escribible por usuario, separada del ejecutable instalado."""
-    root = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "CipherVault"
+    """Ubicación escribible por usuario, separada del ejecutable instalado:
+    %LOCALAPPDATA%\\CipherVault en Windows, ~/Library/Application Support/CipherVault en macOS."""
+    root = cv_bridge.data_dir()
     root.mkdir(parents=True, exist_ok=True)
     # Conserva datos existentes de instalaciones antiguas sin sobrescribirlos.
     for filename in ("passwords.db", "app_config.json", "install_date.txt"):
@@ -622,6 +623,15 @@ def machine_id() -> str:
                                 0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as key:
                 raw = str(winreg.QueryValueEx(key, "MachineGuid")[0])
         except (OSError, ImportError):
+            raw = ""
+    if not raw and sys.platform == "darwin":
+        try:   # identificador del hardware del Mac (no cambia al reinstalar macOS)
+            import subprocess
+            out = subprocess.run(["ioreg", "-rd1", "-c", "IOPlatformExpertDevice"], capture_output=True,
+                                 text=True, timeout=5).stdout
+            match = re.search(r'"IOPlatformUUID"\s*=\s*"([^"]+)"', out)
+            raw = match.group(1) if match else ""
+        except (OSError, ValueError, subprocess.SubprocessError):
             raw = ""
     if not raw:
         for candidate in ("/etc/machine-id", "/var/lib/dbus/machine-id"):

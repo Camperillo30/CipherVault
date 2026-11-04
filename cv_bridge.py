@@ -42,7 +42,12 @@ BROWSER_REG_KEYS = (
 
 
 def data_dir() -> Path:
-    return Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "CipherVault"
+    """Carpeta de datos de CipherVault (la misma que usa la app)."""
+    if os.environ.get("LOCALAPPDATA"):
+        return Path(os.environ["LOCALAPPDATA"]) / "CipherVault"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "CipherVault"
+    return Path.home() / "CipherVault"
 
 
 def bridge_file() -> Path:

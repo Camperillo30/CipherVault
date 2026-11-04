@@ -1,5 +1,5 @@
 ; ============================================================
-;  CipherVault.iss — instalador de Windows (Inno Setup 6)
+;  CipherVault.iss — instalador de Windows (Inno Setup 6 o 7)
 ;  Lo compila build.ps1 automáticamente si Inno Setup está instalado:
 ;    ISCC.exe /DAppVersion=3.1.0 installer\CipherVault.iss
 ;  Resultado: dist\CipherVault-Setup-<versión>.exe

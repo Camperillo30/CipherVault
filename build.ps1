@@ -19,7 +19,7 @@
 #    6. Ejecuta PyInstaller con CipherVault.spec y genera dist\CipherVault.exe.
 #    7. Si hay un certificado de firma de código configurado, firma el .exe
 #       (CIPHERVAULT_SIGN_THUMBPRINT, o CIPHERVAULT_SIGN_PFX + CIPHERVAULT_SIGN_PFX_PASSWORD).
-#    8. Si Inno Setup 6 está instalado, genera el instalador
+#    8. Si Inno Setup (6 o 7) está instalado, genera el instalador
 #       dist\CipherVault-Setup-<versión>.exe (installer\CipherVault.iss) y también lo firma.
 #
 #  Uso:  .\build.ps1   (o  .\build.ps1 -PythonVersion 3.12,  .\build.ps1 -SkipInstaller)
@@ -405,10 +405,15 @@ if ($versionLine) { $appVersion = $versionLine.Matches[0].Groups[1].Value }
 
 $setupPath = $null
 if (-not $SkipInstaller) {
+    # Busca ISCC.exe de cualquier version de Inno Setup (6, 7...) en las rutas habituales.
     $iscc = Get-Command iscc.exe -ErrorAction SilentlyContinue
     $isccPath = if ($iscc) { $iscc.Source } else {
-        @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
-          "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+        $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, (Join-Path $env:LOCALAPPDATA "Programs")) |
+                 Where-Object { $_ -and (Test-Path $_) }
+        Get-ChildItem -Path $roots -Directory -Filter "Inno Setup*" -ErrorAction SilentlyContinue |
+            Sort-Object Name -Descending |
+            ForEach-Object { Join-Path $_.FullName "ISCC.exe" } |
+            Where-Object { Test-Path $_ } | Select-Object -First 1
     }
     if ($isccPath) {
         & $isccPath "/DAppVersion=$appVersion" "installer\CipherVault.iss"
@@ -418,7 +423,7 @@ if (-not $SkipInstaller) {
         Write-Host "Instalador listo:" $setupPath
         Write-Host "SHA-256 instalador:" (Get-FileHash $setupPath -Algorithm SHA256).Hash
     } else {
-        Write-Warning "Inno Setup 6 no esta instalado: no se genero el instalador (descargalo gratis en jrsoftware.org/isinfo.php)."
+        Write-Warning "Inno Setup no esta instalado: no se genero el instalador (descargalo gratis en jrsoftware.org/isinfo.php)."
     }
 }
 

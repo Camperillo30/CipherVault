@@ -5,11 +5,36 @@
 <h1 align="center">CipherVault</h1>
 
 <p align="center">
-  Gestor de contraseñas de escritorio para <b>Windows</b> (Python 3.11 + Tkinter). Los datos viven cifrados en una base SQLite local y el <code>.exe</code> se genera con PyInstaller.<br>
+  Gestor de contraseñas de escritorio para <b>Windows</b> y <b>macOS</b> (Python 3.11 + Tkinter). Los datos viven cifrados en una base SQLite local y la app se genera con PyInstaller.<br>
   Pensado para usuarios y pymes en Colombia, con licencias por plan.
 </p>
 
-> ⚠️ **Proyecto en etapa de pruebas.** CipherVault todavía no está lista para instalar ni para comprar.
+> ⚠️ **Versión de prueba (pre-release).** Puedes descargarla y probarla, pero todavía está en etapa de pruebas.
+
+## Descargar
+
+<p align="center">
+  <a href="https://github.com/Camperillo30/CipherVault/releases/download/v3.1.0/CipherVault-Setup.exe"><b>⬇️ Descargar para Windows</b></a> (Windows 10 y 11)
+  &nbsp;·&nbsp;
+  <a href="https://github.com/Camperillo30/CipherVault/releases/download/v3.1.0/CipherVault-macOS.zip"><b>⬇️ Descargar para Mac</b></a> (macOS 11 o superior, chip Apple M1 o más nuevo)
+  <br><sub><a href="https://github.com/Camperillo30/CipherVault/releases">Todas las versiones</a></sub>
+</p>
+
+<details>
+<summary><b>Windows dice «Windows protegió su PC»</b></summary>
+
+CipherVault todavía no tiene firma de código, así que SmartScreen muestra ese aviso la primera vez. Haz clic en **Más información** → **Ejecutar de todas formas**. El instalador no pide permisos de administrador y al desinstalar no borra tus contraseñas.
+</details>
+
+<details>
+<summary><b>Mac dice que «no se puede abrir» o que es de un desarrollador no identificado</b></summary>
+
+1. Descomprime el .zip y arrastra **CipherVault** a la carpeta **Aplicaciones**.
+2. Ábrelo una vez (aparecerá el aviso) y ciérralo.
+3. Ve a **Ajustes del Sistema → Privacidad y seguridad**, baja hasta el mensaje de CipherVault y pulsa **Abrir de todas formas**.
+
+En Mac no están la auto-escritura (Ctrl + Alt + A), Windows Hello ni la extensión del navegador; todo lo demás funciona igual (bóveda, 2FA, sincronización, equipo, importar CSV).
+</details>
 
 ![Panel principal de CipherVault](docs/captura-inicio.png)
 
@@ -47,7 +72,8 @@
 - `cv_sync.py`: sincronización por carpeta (`.cvsync`) y bóveda de equipo (`.cvteam`, claves X25519).
 - `cv_bridge.py` y `ciphervault_bridge.py`: puente local con la extensión del navegador (`CipherVaultBridge.exe`).
 - `extension/`: la extensión (Manifest V3). `extension/TIENDA.md` explica cómo publicarla y `extension/PRIVACIDAD.md` es su política de privacidad.
-- `installer/CipherVault.iss`: instalador de Windows (Inno Setup 6), lo compila `build.ps1`.
+- `installer/CipherVault.iss`: instalador de Windows (Inno Setup 6 o 7), lo compila `build.ps1`.
+- `CipherVault-mac.spec` y `.github/workflows/release-macos.yml`: versión de macOS. Al publicar un release en GitHub, GitHub Actions compila `CipherVault.app` en una Mac y sube `CipherVault-macOS.zip` al release. Necesita los secretos `CIPHERVAULT_ACTIVATION_URL` y `CIPHERVAULT_ACTIVATION_SECRET` en *Settings → Secrets and variables → Actions*.
 - `Main.py`: punto de entrada; registra los errores de arranque en el log.
 - `build.ps1`: crea el entorno, genera `desktop_runtime_config.json` (sin nada de developer) y compila `dist\CipherVault.exe`.
 - `CipherVault.spec`: especificación de PyInstaller (se niega a compilar si el JSON trae claves de developer).
