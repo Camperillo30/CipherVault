@@ -217,3 +217,18 @@ def test_login_con_windows_hello(ui, monkeypatch):
     app.answers[:] = [PW, "Otra-Contraseña-Nueva-456", "Otra-Contraseña-Nueva-456"]
     app._change_master_password()
     assert app._hello_users() == []
+
+
+def test_elegir_paquete_de_equipo(ui, monkeypatch):
+    app = ui
+    register_and_login(app)
+    opened = []
+    monkeypatch.setattr(gcs.WompiHelper, "open_checkout", staticmethod(lambda key: opened.append(key) or True))
+    monkeypatch.setattr(gcs.WompiHelper, "has_link", staticmethod(lambda key: True))
+    app.choices[:] = ["equipo_ilimitado"]
+    app._choose_team_plan()
+    app.root.update()
+    assert opened == ["equipo_ilimitado"]
+    for child in app.root.winfo_children():
+        if isinstance(child, tk.Toplevel):
+            child.destroy()

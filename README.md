@@ -113,7 +113,9 @@ Flujo de compra: la app abre el Payment Link de Wompi → Make genera un **códi
 | `free` | 50 | no | no | no | gratis |
 | `trial` (30 días) | 50 | sí | no | no | gratis |
 | `premium` | ilimitadas | sí | sí | sí | 9.900 COP/mes · 89.900 COP/año · 149.900 COP de por vida |
-| `equipo` | ilimitadas | sí, + bóveda de equipo | sí | sí | 14.900 COP por usuario al mes |
+| `equipo` | ilimitadas | sí, + bóveda de equipo | sí | sí | por mes: 3 usuarios 39.900 · 5 usuarios 59.900 · 10 usuarios 99.900 · ilimitados 199.900 |
+
+Los paquetes de Equipo se pagan una sola vez por la empresa. Make envía al correo del pago 3, 5 o 10 códigos (uno por persona) o, en el ilimitado, un código de empresa con uso justo de hasta 100 equipos. Estos códigos **no** están atados al correo: cada empleado los activa en su propia cuenta. La app primero prueba el código con el correo de la cuenta y, si no existe, como código de equipo.
 
 Las tres opciones de Premium activan el mismo plan; solo cambia la duración que Make guarda con el código (1, 12 o 1200 meses). El plan `basic` ya no se vende, pero los códigos emitidos antes siguen funcionando (ahora con contraseñas ilimitadas). Importar CSV y la auto-escritura están disponibles en todos los planes.
 

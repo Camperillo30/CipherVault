@@ -136,8 +136,14 @@ function Get-ConfigJsonMap {
 }
 
 # Links de pago reales de Wompi (no son secretos). Se usan si .env no define CIPHERVAULT_WOMPI_LINK_MAP.
-$defaultWompiLinks = '{"premium_mensual":"https://checkout.wompi.co/l/KepI4g","premium_anual":"https://checkout.wompi.co/l/I75Zba","premium_vida":"https://checkout.wompi.co/l/nfKj8q"}'
+$defaultWompiLinks = '{"premium_mensual":"https://checkout.wompi.co/l/KepI4g","premium_anual":"https://checkout.wompi.co/l/I75Zba","premium_vida":"https://checkout.wompi.co/l/nfKj8q","equipo_3":"https://checkout.wompi.co/l/5fZGtj","equipo_5":"https://checkout.wompi.co/l/1TY6Z1","equipo_10":"https://checkout.wompi.co/l/KUzO5b","equipo_ilimitado":"https://checkout.wompi.co/l/bwpwwK"}'
 $wompiLinkMap = Get-ConfigJsonMap -Key "CIPHERVAULT_WOMPI_LINK_MAP" -Default $defaultWompiLinks
+# Completa con los links por defecto los planes que el .env no trae (por ejemplo, los de Equipo).
+foreach ($prop in ($defaultWompiLinks | ConvertFrom-Json).PSObject.Properties) {
+    if (-not ($wompiLinkMap.PSObject.Properties.Name -contains $prop.Name)) {
+        $wompiLinkMap | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value
+    }
+}
 
 # Este es el conjunto de valores que terminará embebido dentro del .exe
 # (a través de desktop_runtime_config.json, incluido por CipherVault.spec).
@@ -149,7 +155,10 @@ $embeddedDesktopConfig = [ordered]@{
     CIPHERVAULT_PRICE_PREMIUM_MENSUAL_COP = Get-ConfigValue -Key "CIPHERVAULT_PRICE_PREMIUM_MENSUAL_COP" -Default "9900"
     CIPHERVAULT_PRICE_PREMIUM_ANUAL_COP   = Get-ConfigValue -Key "CIPHERVAULT_PRICE_PREMIUM_ANUAL_COP" -Default "89900"
     CIPHERVAULT_PRICE_PREMIUM_VIDA_COP    = Get-ConfigValue -Key "CIPHERVAULT_PRICE_PREMIUM_VIDA_COP" -Default "149900"
-    CIPHERVAULT_PRICE_EQUIPO_MENSUAL_COP  = Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_MENSUAL_COP" -Default "14900"
+    CIPHERVAULT_PRICE_EQUIPO_3_COP          = Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_3_COP" -Default "39900"
+    CIPHERVAULT_PRICE_EQUIPO_5_COP          = Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_5_COP" -Default "59900"
+    CIPHERVAULT_PRICE_EQUIPO_10_COP         = Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_10_COP" -Default "99900"
+    CIPHERVAULT_PRICE_EQUIPO_ILIMITADO_COP  = Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_ILIMITADO_COP" -Default "199900"
     # IDs de la extensión publicada (Chrome Web Store / Edge), separados por comas
     CIPHERVAULT_EXTENSION_IDS             = Get-ConfigValue -Key "CIPHERVAULT_EXTENSION_IDS"
 }
@@ -159,7 +168,7 @@ $linkMapProps = @($wompiLinkMap.PSObject.Properties)
 if ($linkMapProps.Count -eq 0) {
     Write-Warning "CIPHERVAULT_WOMPI_LINK_MAP esta vacio o no es JSON valido. El boton 'Comprar plan' no va a funcionar."
 } else {
-    foreach ($planKey in @("premium_mensual", "premium_anual", "premium_vida", "equipo_mensual")) {
+    foreach ($planKey in @("premium_mensual", "premium_anual", "premium_vida", "equipo_3", "equipo_5", "equipo_10", "equipo_ilimitado")) {
         $match = $linkMapProps | Where-Object { $_.Name -eq $planKey -and -not [string]::IsNullOrWhiteSpace([string]$_.Value) }
         if (-not $match) {
             Write-Warning "CIPHERVAULT_WOMPI_LINK_MAP no tiene un link configurado para el plan '$planKey'."

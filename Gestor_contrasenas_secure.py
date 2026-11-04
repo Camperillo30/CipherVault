@@ -264,7 +264,19 @@ def _env_json_map(key: str) -> dict:
         return {}
 
 
-WOMPI_LINK_MAP = _env_json_map("CIPHERVAULT_WOMPI_LINK_MAP")
+# Links de pago reales (no son secretos). El .env / la config embebida solo los reemplaza
+# si trae un link distinto para el mismo plan.
+DEFAULT_WOMPI_LINKS = {
+    "premium_mensual":  "https://checkout.wompi.co/l/KepI4g",
+    "premium_anual":    "https://checkout.wompi.co/l/I75Zba",
+    "premium_vida":     "https://checkout.wompi.co/l/nfKj8q",
+    "equipo_3":         "https://checkout.wompi.co/l/5fZGtj",
+    "equipo_5":         "https://checkout.wompi.co/l/1TY6Z1",
+    "equipo_10":        "https://checkout.wompi.co/l/KUzO5b",
+    "equipo_ilimitado": "https://checkout.wompi.co/l/bwpwwK",
+}
+WOMPI_LINK_MAP = {**DEFAULT_WOMPI_LINKS,
+                  **{k: v for k, v in _env_json_map("CIPHERVAULT_WOMPI_LINK_MAP").items() if v}}
 
 _PREMIUM_FEATURES = [
     "Contraseñas ilimitadas",
@@ -316,19 +328,34 @@ PLANES = {
 
 # Plan para empresas: bóveda de equipo compartida. Se cobra por usuario: cada empleado
 # activa su propio código (la empresa paga el link con el email de cada empleado).
-TEAM_PLANES = {
-    "equipo_mensual": {
-        "nombre":      "Equipo",
+def _team_plan(key: str, users: int | None, default_price: int) -> dict:
+    """Paquete del plan Equipo. users=None → usuarios ilimitados (un código de empresa)."""
+    label = f"{users} usuarios" if users else "Usuarios ilimitados"
+    price = _env_int(f"CIPHERVAULT_PRICE_{key.upper()}_COP", default_price)
+    return {
+        "nombre":      f"Equipo · {label}",
         "plan":        "equipo",
-        "precio_cop":  _env_int("CIPHERVAULT_PRICE_EQUIPO_MENSUAL_COP", 14900),
-        "periodo":     "/usuario/mes",
-        "descripcion": "Todo Premium + bóveda compartida con permisos para tu empresa.",
+        "usuarios":    users,
+        "precio_cop":  price,
+        "periodo":     "/mes",
+        "descripcion": (f"{users} códigos de activación, uno por persona." if users else
+                        "Un código de empresa para todo tu equipo (uso justo: hasta 100 equipos)."),
         "color":       "#74b9ff",
         "meses":       1,
         "badge":       "EMPRESAS",
         "features":    ["Todo lo de Premium", "Bóveda de equipo compartida",
-                        "Roles: administrador, editor, solo lectura", "Agregar y quitar empleados"],
-    },
+                        "Roles: administrador, editor, solo lectura"],
+    }
+
+
+# Plan para empresas: bóveda de equipo compartida. Un solo pago de la empresa y le llegan
+# por correo los códigos (o un código de empresa, en el paquete ilimitado) para repartir:
+# estos códigos NO están atados al correo de quien paga.
+TEAM_PLANES = {
+    "equipo_3":         _team_plan("equipo_3", 3, 39900),
+    "equipo_5":         _team_plan("equipo_5", 5, 59900),
+    "equipo_10":        _team_plan("equipo_10", 10, 99900),
+    "equipo_ilimitado": _team_plan("equipo_ilimitado", None, 199900),
 }
 ALL_PLANES = {**PLANES, **TEAM_PLANES}
 
@@ -710,7 +737,12 @@ class WompiHelper:
 #  ACTIVACIÓN DE LICENCIAS (Wompi → Make → código de un solo uso → App)
 # ══════════════════════════════════════════════
 class ActivationError(Exception):
-    """Error de activación con un mensaje listo para mostrarse al usuario."""
+    """Error de activación con un mensaje listo para mostrarse al usuario. `reason` es el
+    motivo que devolvió el servidor ("invalid", "used", "expired"…), si lo hubo."""
+
+    def __init__(self, message: str, reason: str = ""):
+        super().__init__(message)
+        self.reason = reason
 
 
 def _parse_datetime(text: str) -> datetime | None:
@@ -866,7 +898,7 @@ class LicenseActivationManager:
             reason = str(body.get("error", "")).lower()
             log.info("Activación rechazada por el servidor: %s", reason or "sin motivo")
             raise ActivationError(LicenseActivationManager.ERROR_MESSAGES.get(
-                reason, "El servicio de activación rechazó el código. Escribe a soporte."))
+                reason, "El servicio de activación rechazó el código. Escribe a soporte."), reason)
 
         fields = {k: str(body.get(k, "")) for k in ("plan", "reference", "meses", "created_at")}
         expected = LicenseActivationManager.response_signature(
@@ -942,7 +974,15 @@ class LicenseActivationManager:
             raise ActivationError("Tu cuenta no tiene email registrado, así que no se puede validar el código.")
 
         wanted = LicenseActivationManager.code_hash(norm, email)
-        info = LicenseActivationManager._verify(wanted)
+        try:
+            info = LicenseActivationManager._verify(wanted)
+        except ActivationError as exc:
+            if exc.reason != "invalid":
+                raise
+            # Códigos del plan Equipo: los compra la empresa y los reparte, así que no
+            # están atados al correo de nadie (su hash usa un email vacío).
+            wanted = LicenseActivationManager.code_hash(norm, "")
+            info = LicenseActivationManager._verify(wanted)
         plan, reference, created, meses = info["plan"], info["reference"], info["created"], info["meses"]
 
         with db() as conn:
@@ -1267,7 +1307,7 @@ VERSIONS = {
         "security_analysis": True, "password_length_max": 64,
         "categories": True, "export": True, "backup": True, "totp": True,
         "sync": True, "team": True,
-        "notes_max_length": 2000, "price": TEAM_PLANES["equipo_mensual"]["precio_cop"], "color": "#74b9ff",
+        "notes_max_length": 2000, "price": TEAM_PLANES["equipo_3"]["precio_cop"], "color": "#74b9ff",
     },
     "developer": {
         "name": "Desarrollador", "max_passwords": -1,
@@ -3491,15 +3531,15 @@ class CipherVaultApp:
                       cursor="hand2").pack(fill="x", pady=(10, 0))
 
         # ── plan para empresas ──────────────────────────────
-        team = TEAM_PLANES["equipo_mensual"]
+        team = TEAM_PLANES["equipo_3"]
         strip = tk.Frame(win, bg=C["card"], padx=18, pady=10)
         strip.pack(fill="x", padx=42, pady=(0, 4))
         team_price = f"COP {team['precio_cop']:,.0f}".replace(",", ".")
-        self._label(strip, f"👥 ¿Para tu empresa? Plan Equipo: {team_price} {team['periodo']}",
+        self._label(strip, f"👥 ¿Para tu empresa? Plan Equipo desde {team_price}/mes",
                     bold=True, color=team["color"]).pack(side="left")
-        self._label(strip, "  Bóveda compartida con roles", color=C["muted"], font_size=9).pack(side="left")
-        tk.Button(strip, text="Elegir Equipo", command=lambda: [win.destroy(),
-                                                                 self._show_wompi_checkout("equipo_mensual")],
+        self._label(strip, "  3, 5, 10 o usuarios ilimitados · un solo pago", color=C["muted"],
+                    font_size=9).pack(side="left")
+        tk.Button(strip, text="Ver paquetes", command=lambda: [win.destroy(), self._choose_team_plan()],
                   bg=team["color"], fg="#000000", font=("Segoe UI", 10, "bold"), relief="flat",
                   padx=12, pady=4, cursor="hand2").pack(side="right")
 
@@ -3511,6 +3551,19 @@ class CipherVaultApp:
         self._btn(foot_btns, "🔑 Ya tengo un código",
                   lambda: [win.destroy(), self._activate_license_dialog()]).pack(side="left", padx=6)
         self._btn(foot_btns, "Volver", win.destroy).pack(side="left", padx=6)
+
+    def _choose_team_plan(self):
+        """Elige el paquete del plan Equipo y abre su pago."""
+        options = []
+        for key, plan in TEAM_PLANES.items():
+            price = f"COP {plan['precio_cop']:,.0f}".replace(",", ".")
+            per_user = (f" · {plan['precio_cop'] // plan['usuarios']:,.0f} por usuario".replace(",", ".")
+                        if plan["usuarios"] else "")
+            options.append((key, f"{plan['nombre'].split('· ')[1]} — {price}/mes{per_user}"))
+        key = self._choose("Plan Equipo", "Un solo pago de la empresa. Te llegan por correo los códigos "
+                                          "para repartir a tu equipo.", options)
+        if key:
+            self._show_wompi_checkout(key)
 
     def _show_wompi_checkout(self, plan_key: str):
         """Abre el Payment Link fijo de Wompi para el plan y muestra las instrucciones de activación."""
@@ -3531,7 +3584,7 @@ class CipherVaultApp:
 
         win = tk.Toplevel(self.root)
         win.title("💳 Pago en proceso")
-        self._set_popup_geometry(win, 580, 500)
+        self._set_popup_geometry(win, 600, 580)
         win.configure(bg=C["bg"])
         win.transient(self.root)
         win.grab_set()
@@ -3539,7 +3592,7 @@ class CipherVaultApp:
         self._label(win, "✅ Checkout abierto en tu navegador",
                     font_size=16, bold=True, color=C["success"]).pack(pady=(24, 8))
         price_text = f"COP {plan['precio_cop']:,.0f}".replace(",", ".")
-        plan_title = "Plan Equipo" if plan["plan"] == "equipo" else f"Premium {plan['nombre'].lower()}"
+        plan_title = plan["nombre"] if plan["plan"] == "equipo" else f"Premium {plan['nombre'].lower()}"
         self._label(win, f"Plan seleccionado: {plan_title} · {price_text}{plan['periodo']}",
                     color=C["muted"]).pack()
 
@@ -3549,16 +3602,29 @@ class CipherVaultApp:
         # Aviso crítico: el código solo funciona en la cuenta con el email usado en el pago
         warn = tk.Frame(body, bg=C["warning"], padx=14, pady=10)
         warn.pack(fill="x", pady=(0, 14))
-        if user_email:
+        if plan["plan"] == "equipo":
+            n_codes = (f"los {plan['usuarios']} códigos" if plan["usuarios"] else "el código de empresa")
+            warn_text = (f"⚠️ Te llegarán {n_codes} al email que escribas en Wompi.\n"
+                         "Repártelos: cada persona lo activa en SU cuenta, con su propio correo.")
+        elif user_email:
             warn_text = (f"⚠️ IMPORTANTE: paga con este email exacto:\n{user_email}\n"
                          f"El código sirve para esta cuenta, hasta en {MAX_DEVICES} equipos.")
         else:
             warn_text = ("⚠️ IMPORTANTE: paga con el MISMO email de tu cuenta de CipherVault.\n"
                          f"El código sirve para esa cuenta, hasta en {MAX_DEVICES} equipos.")
-        tk.Label(warn, text=warn_text, font=("Segoe UI", 10, "bold"),
+        tk.Label(warn, text=warn_text, font=("Segoe UI", 10, "bold"), wraplength=self._s(460),
                  bg=C["warning"], fg="#000000", justify="left").pack(anchor="w")
 
-        steps = [
+        if plan["plan"] == "equipo":
+            steps = [
+                "1️⃣  Completa el pago en la ventana del navegador.",
+                "2️⃣  Al aprobarse, te llega un correo con los códigos (revisa también spam).",
+                "3️⃣  Dale un código a cada persona: lo pega en «Activar licencia» de su cuenta.",
+                "4️⃣  Luego crea el equipo en la pestaña «Bóveda de equipo» y agrega a cada persona.",
+            ]
+        else:
+            steps = None
+        steps = steps or [
             "1️⃣  Completa el pago en la ventana del navegador.",
             "2️⃣  Al aprobarse, recibirás un correo con tu código de activación.",
             "3️⃣  Vuelve aquí, pulsa «Activar licencia» y pega el código.",
@@ -4986,7 +5052,7 @@ class CipherVaultApp:
             self._label(f, "👥 Bóveda de equipo", font_size=20, bold=True).pack(anchor="w")
             self._plan_banner(f, C["card"], "Disponible en el plan Equipo",
                               "Comparte contraseñas de la empresa con tus empleados, con roles y permisos.",
-                              lambda: self._show_plans_screen("equipo_mensual"), "👥 Ver plan Equipo")
+                              self._choose_team_plan, "👥 Ver plan Equipo")
             return
         priv, pub = self._team_keys()
         path = self._team_path()

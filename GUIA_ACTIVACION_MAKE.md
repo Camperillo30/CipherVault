@@ -41,12 +41,16 @@ La **clave del registro** es el `code_hash`. Crea un segundo Data Store `CipherV
 | `premium_mensual` | 9.900 COP (`990000` centavos) | `premium` | 1 |
 | `premium_anual` | 89.900 COP (`8990000` centavos) | `premium` | 12 |
 | `premium_vida` | 149.900 COP (`14990000` centavos) | `premium` | 1200 |
+| `equipo_3` (`5fZGtj`) | 39.900 COP (`3990000`) | `equipo` | 1, **3 códigos** |
+| `equipo_5` (`1TY6Z1`) | 59.900 COP (`5990000`) | `equipo` | 1, **5 códigos** |
+| `equipo_10` (`KUzO5b`) | 99.900 COP (`9990000`) | `equipo` | 1, **10 códigos** |
+| `equipo_ilimitado` (`bwpwwK`) | 199.900 COP (`19990000`) | `equipo` | 1, **1 código de empresa** (hasta 100 equipos) |
 
-| `equipo_mensual` | 14.900 COP (`1490000` centavos) | `equipo` | 1 |
+Todos están creados y conectados en Make. Cada rama comprueba el ID del link en la referencia del pago **y** el monto exacto.
 
-Ya están creados y conectados en Make los tres links de Premium (`KepI4g`, `I75Zba` y `nfKj8q`). Cada rama comprueba el ID del link en la referencia del pago **y** el monto exacto. Falta el link del plan Equipo: cuando lo crees, se agrega una rama igual con `plan` = `equipo`.
+**Ramas de Equipo.** Un *Repeater* (3, 5 o 10 repeticiones) genera un código por vuelta y guarda su registro. Un *Text aggregator* junta los códigos en una lista y se envía **un solo correo**. Los códigos de Equipo no van atados al correo: su `code_hash` es `sha256(CODIGO + "|")`, con el email vacío, para que la empresa los reparta. En el escenario de canje, el límite de equipos es 3 por código, o 100 si la referencia del pago contiene `bwpwwK` (paquete ilimitado).
 
-Crea en Wompi un link de pago por cada fila (con ese monto exacto) y pon sus URLs en `CIPHERVAULT_WOMPI_LINK_MAP`. Si llega un monto que no es ninguno de estos, no generes código (ruta de error).
+Las URLs de los links están en `CIPHERVAULT_WOMPI_LINK_MAP` (y como valor por defecto en `build.ps1`). Si llega un pago con un monto que no coincide con su link, no se genera ningún código.
 
 1. **Repeater** (cantidad = equipos incluidos; 1 por defecto).
 2. **Set variable `codigo`** (16 caracteres al azar, imposibles de adivinar sin el secreto):
