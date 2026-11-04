@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# CipherVault-mac.spec — PyInstaller para macOS (lo usa .github/workflows/release-macos.yml)
+# CipherVault-mac.spec — PyInstaller para macOS (lo usa .github/workflows/release.yml)
 #
 # Genera dist/CipherVault.app. Igual que en Windows, desktop_runtime_config.json se
 # genera antes (con la URL y el secreto de activación, desde los secretos de GitHub) y

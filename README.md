@@ -73,7 +73,7 @@ En Mac no están la auto-escritura (Ctrl + Alt + A), Windows Hello ni la extensi
 - `cv_bridge.py` y `ciphervault_bridge.py`: puente local con la extensión del navegador (`CipherVaultBridge.exe`).
 - `extension/`: la extensión (Manifest V3). `extension/TIENDA.md` explica cómo publicarla y `extension/PRIVACIDAD.md` es su política de privacidad.
 - `installer/CipherVault.iss`: instalador de Windows (Inno Setup 6 o 7), lo compila `build.ps1`.
-- `CipherVault-mac.spec` y `.github/workflows/release-macos.yml`: versión de macOS. Al publicar un release en GitHub, GitHub Actions compila `CipherVault.app` en una Mac y sube `CipherVault-macOS.zip` al release. Necesita los secretos `CIPHERVAULT_ACTIVATION_URL` y `CIPHERVAULT_ACTIVATION_SECRET` en *Settings → Secrets and variables → Actions*.
+- `.github/workflows/release.yml` (con `CipherVault-mac.spec`): al publicar un release en GitHub, GitHub Actions compila el instalador de Windows, la extensión y la app de macOS (`CipherVault-macOS.zip`). Necesita los secretos `CIPHERVAULT_ACTIVATION_URL` y `CIPHERVAULT_ACTIVATION_SECRET` en *Settings → Secrets and variables → Actions*.
 - `Main.py`: punto de entrada; registra los errores de arranque en el log.
 - `build.ps1`: crea el entorno, genera `desktop_runtime_config.json` (sin nada de developer) y compila `dist\CipherVault.exe`.
 - `CipherVault.spec`: especificación de PyInstaller (se niega a compilar si el JSON trae claves de developer).
