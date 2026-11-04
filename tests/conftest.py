@@ -30,6 +30,7 @@ def isolated_data(tmp_path, monkeypatch):
     monkeypatch.setattr(gcs, "DATA_PATH", tmp_path)
     monkeypatch.setattr(gcs, "DB_FILE", str(tmp_path / "passwords.db"))
     monkeypatch.setattr(gcs, "INSTALL_FILE", str(tmp_path / "install_date.txt"))
+    monkeypatch.setattr(gcs, "CONFIG_FILE", str(tmp_path / "app_config.json"))
     monkeypatch.setattr(gcs, "VAULT_KDF_ITERATIONS", 1000)
     return tmp_path
 

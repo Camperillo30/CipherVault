@@ -42,6 +42,10 @@ La **clave del registro** es el `code_hash`. Crea un segundo Data Store `CipherV
 | `premium_anual` | 89.900 COP (`8990000` centavos) | `premium` | 12 |
 | `premium_vida` | 149.900 COP (`14990000` centavos) | `premium` | 1200 |
 
+| `equipo_mensual` | 14.900 COP (`1490000` centavos) | `equipo` | 1 |
+
+Ya están creados y conectados en Make los tres links de Premium (`KepI4g`, `I75Zba` y `nfKj8q`). Cada rama comprueba el ID del link en la referencia del pago **y** el monto exacto. Falta el link del plan Equipo: cuando lo crees, se agrega una rama igual con `plan` = `equipo`.
+
 Crea en Wompi un link de pago por cada fila (con ese monto exacto) y pon sus URLs en `CIPHERVAULT_WOMPI_LINK_MAP`. Si llega un monto que no es ninguno de estos, no generes código (ruta de error).
 
 1. **Repeater** (cantidad = equipos incluidos; 1 por defecto).

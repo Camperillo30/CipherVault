@@ -76,6 +76,9 @@ Test-RequiredProjectFiles -RequiredFiles @(
     "main.py",
     "gestor_contrasenas_secure.py",
     "cv_extras.py",
+    "cv_sync.py",
+    "cv_bridge.py",
+    "ciphervault_bridge.py",
     "requirements-desktop.txt",
     "CipherVault.spec"
 )
@@ -132,7 +135,9 @@ function Get-ConfigJsonMap {
     }
 }
 
-$wompiLinkMap = Get-ConfigJsonMap -Key "CIPHERVAULT_WOMPI_LINK_MAP" -Default "{}"
+# Links de pago reales de Wompi (no son secretos). Se usan si .env no define CIPHERVAULT_WOMPI_LINK_MAP.
+$defaultWompiLinks = '{"premium_mensual":"https://checkout.wompi.co/l/KepI4g","premium_anual":"https://checkout.wompi.co/l/I75Zba","premium_vida":"https://checkout.wompi.co/l/nfKj8q"}'
+$wompiLinkMap = Get-ConfigJsonMap -Key "CIPHERVAULT_WOMPI_LINK_MAP" -Default $defaultWompiLinks
 
 # Este es el conjunto de valores que terminará embebido dentro del .exe
 # (a través de desktop_runtime_config.json, incluido por CipherVault.spec).
@@ -144,6 +149,9 @@ $embeddedDesktopConfig = [ordered]@{
     CIPHERVAULT_PRICE_PREMIUM_MENSUAL_COP = Get-ConfigValue -Key "CIPHERVAULT_PRICE_PREMIUM_MENSUAL_COP" -Default "9900"
     CIPHERVAULT_PRICE_PREMIUM_ANUAL_COP   = Get-ConfigValue -Key "CIPHERVAULT_PRICE_PREMIUM_ANUAL_COP" -Default "89900"
     CIPHERVAULT_PRICE_PREMIUM_VIDA_COP    = Get-ConfigValue -Key "CIPHERVAULT_PRICE_PREMIUM_VIDA_COP" -Default "149900"
+    CIPHERVAULT_PRICE_EQUIPO_MENSUAL_COP  = Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_MENSUAL_COP" -Default "14900"
+    # IDs de la extensión publicada (Chrome Web Store / Edge), separados por comas
+    CIPHERVAULT_EXTENSION_IDS             = Get-ConfigValue -Key "CIPHERVAULT_EXTENSION_IDS"
 }
 
 
@@ -151,7 +159,7 @@ $linkMapProps = @($wompiLinkMap.PSObject.Properties)
 if ($linkMapProps.Count -eq 0) {
     Write-Warning "CIPHERVAULT_WOMPI_LINK_MAP esta vacio o no es JSON valido. El boton 'Comprar plan' no va a funcionar."
 } else {
-    foreach ($planKey in @("premium_mensual", "premium_anual", "premium_vida")) {
+    foreach ($planKey in @("premium_mensual", "premium_anual", "premium_vida", "equipo_mensual")) {
         $match = $linkMapProps | Where-Object { $_.Name -eq $planKey -and -not [string]::IsNullOrWhiteSpace([string]$_.Value) }
         if (-not $match) {
             Write-Warning "CIPHERVAULT_WOMPI_LINK_MAP no tiene un link configurado para el plan '$planKey'."
@@ -286,6 +294,10 @@ if (Test-Path $buildFolderPath) {
 if (Test-Path $distExePath) {
     Remove-Item $distExePath -Force
 }
+$distBridgePath = Join-Path $PWD "dist\CipherVaultBridge.exe"
+if (Test-Path $distBridgePath) {
+    Remove-Item $distBridgePath -Force
+}
 
 # Compila el ejecutable siguiendo CipherVault.spec (que ya sabe incluir
 # desktop_runtime_config.json y los íconos de assets/).
@@ -293,6 +305,9 @@ if (Test-Path $distExePath) {
 
 if (-not (Test-Path $distExePath)) {
     throw "No se genero el ejecutable esperado en $distExePath"
+}
+if (-not (Test-Path $distBridgePath)) {
+    throw "No se genero el puente del navegador en $distBridgePath"
 }
 
 # ── Firma de código (opcional) ─────────────────────────────────
@@ -345,6 +360,26 @@ function Invoke-CodeSign {
 }
 
 $exeSigned = Invoke-CodeSign -FilePath $distExePath
+$null = Invoke-CodeSign -FilePath $distBridgePath
+
+# ── Extensión del navegador: .zip listo para la Chrome Web Store ──
+$extensionZip = Join-Path $PWD "dist\CipherVault-extension.zip"
+if (Test-Path $extensionZip) { Remove-Item $extensionZip -Force }
+$extensionFiles = Get-ChildItem -Path "extension" -Recurse -File | Where-Object { $_.Extension -ne ".md" }
+$staging = Join-Path $env:TEMP "cv_extension_build"
+if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
+foreach ($file in $extensionFiles) {
+    $relative = $file.FullName.Substring((Resolve-Path "extension").Path.Length + 1)
+    $target = Join-Path $staging $relative
+    New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
+    Copy-Item $file.FullName $target
+}
+Compress-Archive -Path (Join-Path $staging "*") -DestinationPath $extensionZip
+Remove-Item $staging -Recurse -Force
+Write-Host "Extension lista para la tienda:" $extensionZip
+if ([string]::IsNullOrWhiteSpace($embeddedDesktopConfig.CIPHERVAULT_EXTENSION_IDS)) {
+    Write-Warning "CIPHERVAULT_EXTENSION_IDS esta vacio: la app no podra hablar con la extension hasta que pongas su ID (ver extension\TIENDA.md)."
+}
 
 # Resumen final para confirmar que el .exe quedó listo.
 $exeInfo = Get-Item $distExePath

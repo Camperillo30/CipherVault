@@ -32,6 +32,7 @@ def ui(monkeypatch, tmp_path):
     monkeypatch.setattr(app, "_choose", lambda *a, **k: app.choices.pop(0) if app.choices else None)
     app.calls, app.answers = calls, answers
     yield app
+    app._bridge.stop()
     try:
         root.destroy()
     except tk.TclError:

@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "CipherVault",
+  "short_name": "CipherVault",
+  "description": "Rellena en el navegador las contraseñas que guardas en CipherVault, el gestor de contraseñas para Windows.",
+  "version": "1.0.0",
+  "author": "S.C.A",
+  "homepage_url": "https://github.com/Camperillo30/CipherVault",
+  "minimum_chrome_version": "102",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "CipherVault",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
+  },
+  "permissions": ["nativeMessaging", "activeTab", "scripting", "storage"],
+  "commands": {
+    "_execute_action": {
+      "suggested_key": { "default": "Alt+Shift+V" },
+      "description": "Abrir CipherVault en esta página"
+    }
+  }
+}

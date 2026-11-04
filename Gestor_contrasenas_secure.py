@@ -36,6 +36,7 @@ import logging
 import logging.handlers
 import os
 import platform
+import queue
 import re
 import secrets
 import sqlite3
@@ -56,7 +57,9 @@ from tkinter import ttk, messagebox, simpledialog, filedialog
 
 from cryptography.fernet import Fernet, InvalidToken
 
+import cv_bridge
 import cv_extras as cvx
+import cv_sync as cvs
 
 # True dentro del .exe de PyInstaller. En ese caso la app NO confía en nada
 # que el usuario pueda poner en disco o en el entorno (ver _lock_embedded_config).
@@ -311,10 +314,28 @@ PLANES = {
     },
 }
 
+# Plan para empresas: bóveda de equipo compartida. Se cobra por usuario: cada empleado
+# activa su propio código (la empresa paga el link con el email de cada empleado).
+TEAM_PLANES = {
+    "equipo_mensual": {
+        "nombre":      "Equipo",
+        "plan":        "equipo",
+        "precio_cop":  _env_int("CIPHERVAULT_PRICE_EQUIPO_MENSUAL_COP", 14900),
+        "periodo":     "/usuario/mes",
+        "descripcion": "Todo Premium + bóveda compartida con permisos para tu empresa.",
+        "color":       "#74b9ff",
+        "meses":       1,
+        "badge":       "EMPRESAS",
+        "features":    ["Todo lo de Premium", "Bóveda de equipo compartida",
+                        "Roles: administrador, editor, solo lectura", "Agregar y quitar empleados"],
+    },
+}
+ALL_PLANES = {**PLANES, **TEAM_PLANES}
+
 # Planes que un código de activación firmado puede otorgar. "basic" ya no se vende,
 # pero se sigue aceptando para los códigos emitidos antes. "developer" no se vende:
 # solo lo concede un registro que tú creas en Make para tu correo.
-REDEEMABLE_PLANS = frozenset({"basic", "premium", "developer"})
+REDEEMABLE_PLANS = frozenset({"basic", "premium", "equipo", "developer"})
 
 # ──────────────────────────────────────────────
 #  SERVICIO DE ACTIVACIÓN — escenario de Make (webhook con respuesta)
@@ -324,6 +345,8 @@ REDEEMABLE_PLANS = frozenset({"basic", "premium", "developer"})
 #  deshabilitada (no hay valor por defecto).
 # ──────────────────────────────────────────────
 ACTIVATION_URL = _env_str("CIPHERVAULT_ACTIVATION_URL", "")
+# IDs de la extensión publicada (Chrome Web Store / Edge Add-ons), separados por comas.
+EXTENSION_IDS = _env_list("CIPHERVAULT_EXTENSION_IDS")
 ACTIVATION_SECRET = _env_str("CIPHERVAULT_ACTIVATION_SECRET", "")
 ACTIVATION_TIMEOUT = 12   # segundos
 
@@ -1211,30 +1234,42 @@ VERSIONS = {
         "name": "Gratis", "max_passwords": FREE_MAX_PASSWORDS,
         "security_analysis": False, "password_length_max": 16,
         "categories": False, "export": False, "backup": False, "totp": False,
+        "sync": False, "team": False,
         "notes_max_length": 100, "price": 0, "color": "#b2bec3",
     },
     "trial": {
         "name": "Prueba", "max_passwords": FREE_MAX_PASSWORDS,
         "security_analysis": True, "password_length_max": 32,
         "categories": True, "export": False, "backup": False, "totp": True,
+        "sync": False, "team": False,
         "notes_max_length": 250, "price": 0, "color": "#fdcb6e",
     },
     "basic": {
         "name": "Básico", "max_passwords": -1,
         "security_analysis": True, "password_length_max": 32,
         "categories": True, "export": True, "backup": False, "totp": True,
+        "sync": False, "team": False,
         "notes_max_length": 500, "price": 0, "color": "#00cec9",
     },
     "premium": {
         "name": "Premium", "max_passwords": -1,
         "security_analysis": True, "password_length_max": 64,
         "categories": True, "export": True, "backup": True, "totp": True,
+        "sync": True, "team": False,
         "notes_max_length": 2000, "price": PLANES["premium_mensual"]["precio_cop"], "color": "#fd79a8",
+    },
+    "equipo": {
+        "name": "Equipo", "max_passwords": -1,
+        "security_analysis": True, "password_length_max": 64,
+        "categories": True, "export": True, "backup": True, "totp": True,
+        "sync": True, "team": True,
+        "notes_max_length": 2000, "price": TEAM_PLANES["equipo_mensual"]["precio_cop"], "color": "#74b9ff",
     },
     "developer": {
         "name": "Desarrollador", "max_passwords": -1,
         "security_analysis": True, "password_length_max": 128,
         "categories": True, "export": True, "backup": True, "totp": True,
+        "sync": True, "team": True,
         "notes_max_length": 500000, "price": 0, "color": "#6c5ce7",
     },
 }
@@ -1332,6 +1367,9 @@ class CipherVaultApp:
         self._setup_styles()
         self._arm_idle_lock()
         self._start_autotype()
+        self._sync_status = ""
+        self.root.after(self.SYNC_INTERVAL_MS, self._sync_loop)
+        self._start_bridge()
         self.show_login()
 
     # ── errores y bloqueo por inactividad ─────
@@ -1484,7 +1522,10 @@ class CipherVaultApp:
             json.dump(self.config, f, indent=2)
 
     def _auto_backup(self):
-        """Mantiene los últimos cinco respaldos de la bóveda local cifrada."""
+        """Mantiene los últimos cinco respaldos de la bóveda local cifrada (y programa una
+        sincronización, porque se llama después de cada cambio)."""
+        if self.current_user:
+            self._schedule_sync()
         if not self.current_user or not get_features(self.user_version).get("backup"):
             return
         backup_dir = DATA_PATH / "backups"
@@ -1552,14 +1593,47 @@ class CipherVaultApp:
                 ("activation_hash",   "NULL"),   # hash del código canjeado: permite re-verificar la licencia
                 ("hello_challenge",   "NULL"),   # reto aleatorio que firma Windows Hello
                 ("hello_wrapped",     "NULL"),   # clave de la bóveda cifrada con la firma de Windows Hello
+                ("sync_path",         "NULL"),   # archivo .cvsync (cifrado con la bóveda)
+                ("sync_key",          "NULL"),   # clave del archivo de sincronización (cifrada con la bóveda)
+                ("sync_salt",         "NULL"),
+                ("sync_iterations",   "NULL"),
+                ("team_priv",         "NULL"),   # clave privada X25519 del miembro (cifrada con la bóveda)
+                ("team_pub",          "NULL"),   # clave pública (base64), de ella sale el código de miembro
+                ("team_path",         "NULL"),   # archivo .cvteam del equipo (cifrado con la bóveda)
             ]:
                 if col not in existing:
                     conn.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT DEFAULT {defval}")
 
             pwd_cols = {row[1] for row in conn.execute("PRAGMA table_info(passwords)")}
-            for col in ("url", "totp"):          # ambos se guardan cifrados (enc1:)
+            for col in ("url", "totp", "uid"):   # url y totp van cifrados (enc1:); uid identifica la entrada al sincronizar
                 if col not in pwd_cols:
                     conn.execute(f"ALTER TABLE passwords ADD COLUMN {col} TEXT DEFAULT NULL")
+            conn.execute("UPDATE passwords SET uid=lower(hex(randomblob(16))) WHERE uid IS NULL OR uid=''")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS sync_tombstones (
+                    user_id INTEGER NOT NULL,
+                    uid TEXT NOT NULL,
+                    deleted_at TEXT NOT NULL,
+                    PRIMARY KEY (user_id, uid)
+                )
+            """)
+            # Toda entrada nueva recibe un uid; todo borrado deja una "lápida" para que la
+            # sincronización lo propague a los otros equipos.
+            conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_passwords_uid AFTER INSERT ON passwords
+                WHEN NEW.uid IS NULL OR NEW.uid = ''
+                BEGIN
+                    UPDATE passwords SET uid = lower(hex(randomblob(16))) WHERE id = NEW.id;
+                END
+            """)
+            conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_passwords_tombstone AFTER DELETE ON passwords
+                WHEN OLD.uid IS NOT NULL
+                BEGIN
+                    INSERT OR REPLACE INTO sync_tombstones(user_id, uid, deleted_at)
+                    VALUES (OLD.user_id, OLD.uid, CURRENT_TIMESTAMP);
+                END
+            """)
 
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS license_activations (
@@ -2153,6 +2227,7 @@ class CipherVaultApp:
         self._setup_styles()
         self._save_config()
         self._show_main()
+        self._schedule_sync(500)
         if status == "tampered" and user.get("activation_hash"):
             self._try_license_repair(user["id"])
         elif status == "tampered":
@@ -2419,6 +2494,7 @@ class CipherVaultApp:
             "developer": "⚡ DESARROLLADOR",
             "trial":     f"🎯 PRUEBA · {TrialLicenseManager.get_days_remaining()[0]}d",
             "premium":   "⭐ PREMIUM",
+            "equipo":    "👥 EQUIPO",
             "basic":     "⭐ BÁSICO",
         }.get(self.user_version, "🆓 GRATIS")
 
@@ -2441,7 +2517,9 @@ class CipherVaultApp:
         nav.append(("❔  Tutorial guiado", self._start_tutorial, "tutorial_nav_button"))
         if self.user_version == "developer":
             nav.append(("⚡  Dev Tools", self._tab_dev_tools, None))
-        if self.user_version not in ["premium", "developer"]:
+        if get_features(self.user_version).get("team"):
+            nav.insert(3, ("👥  Bóveda de equipo", self._tab_team, None))
+        if self.user_version not in ["premium", "equipo", "developer"]:
             nav.append(("💳  Comprar plan", self._show_plans_screen, None))
         if self.user_version != "developer":
             nav.append(("🔑  Activar licencia", self._activate_license_dialog, None))
@@ -2923,23 +3001,27 @@ class CipherVaultApp:
     def _ask_master(self) -> bool:
         """Pide de nuevo la contraseña maestra antes de una acción sensible (ver detalles,
         editar, exportar) y la valida. Comparte el bloqueo por intentos con el login."""
+        return self._ask_master_password() is not None
+
+    def _ask_master_password(self) -> str | None:
+        """Como _ask_master, pero devuelve la contraseña (la necesita la sincronización)."""
         username = self.current_user["username"]
         remaining = self._lock_remaining(username)
         if remaining:
             messagebox.showerror("Espera un momento", f"Demasiados intentos. Intenta de nuevo en {remaining} segundos.")
-            return False
+            return None
         mp = simpledialog.askstring("Contraseña maestra",
                                     "Ingresa tu contraseña maestra:", show="*")
         if not mp:
-            return False
+            return None
         with db() as conn:
             user = get_user_by_id(conn, self.current_user["id"])
         if not authenticate(mp, user).ok:
             self._register_failure(username)
             messagebox.showerror("Error", "Contraseña maestra incorrecta.")
-            return False
+            return None
         self._clear_failures(username)
-        return True
+        return mp
 
     def _get_pwd_data(self) -> dict | None:
         """Obtiene y descifra (contraseña, servicio, usuario y notas) la entrada seleccionada en la tabla."""
@@ -3324,7 +3406,7 @@ class CipherVaultApp:
         """Pantalla de planes: clara, con info completa de cada uno."""
         self._clear_content() if hasattr(self, "content_frame") and self.content_frame.winfo_exists() else None
 
-        if preselect and preselect in PLANES:
+        if preselect and preselect in ALL_PLANES:
             self._show_wompi_checkout(preselect)
             return
 
@@ -3404,13 +3486,22 @@ class CipherVaultApp:
                       relief="flat", padx=18, pady=10,
                       cursor="hand2").pack(fill="x", pady=(10, 0))
 
+        # ── plan para empresas ──────────────────────────────
+        team = TEAM_PLANES["equipo_mensual"]
+        strip = tk.Frame(win, bg=C["card"], padx=18, pady=10)
+        strip.pack(fill="x", padx=42, pady=(0, 4))
+        team_price = f"COP {team['precio_cop']:,.0f}".replace(",", ".")
+        self._label(strip, f"👥 ¿Para tu empresa? Plan Equipo: {team_price} {team['periodo']}",
+                    bold=True, color=team["color"]).pack(side="left")
+        self._label(strip, "  Bóveda compartida con roles", color=C["muted"], font_size=9).pack(side="left")
+        tk.Button(strip, text="Elegir Equipo", command=lambda: [win.destroy(),
+                                                                 self._show_wompi_checkout("equipo_mensual")],
+                  bg=team["color"], fg="#000000", font=("Segoe UI", 10, "bold"), relief="flat",
+                  padx=12, pady=4, cursor="hand2").pack(side="right")
+
         # ── pie de pagina: explicacion breve y clara ─────────
         footer = tk.Frame(win, bg=C["bg"])
         footer.pack(fill="x", padx=30, pady=(0, 8))
-        self._label(footer,
-                    "Paga en Wompi con el mismo email de tu cuenta. Al aprobarse el pago te enviamos "
-                    "un código de activación por correo: pégalo en «Activar licencia».",
-                    color=C["muted"], font_size=9, justify="center", wraplength=self._s(700)).pack()
         foot_btns = tk.Frame(footer, bg=C["bg"])
         foot_btns.pack(pady=(8, 0))
         self._btn(foot_btns, "🔑 Ya tengo un código",
@@ -3419,7 +3510,7 @@ class CipherVaultApp:
 
     def _show_wompi_checkout(self, plan_key: str):
         """Abre el Payment Link fijo de Wompi para el plan y muestra las instrucciones de activación."""
-        plan = PLANES[plan_key]
+        plan = ALL_PLANES[plan_key]
 
         if not WompiHelper.has_link(plan_key):
             messagebox.showerror(
@@ -3444,7 +3535,8 @@ class CipherVaultApp:
         self._label(win, "✅ Checkout abierto en tu navegador",
                     font_size=16, bold=True, color=C["success"]).pack(pady=(24, 8))
         price_text = f"COP {plan['precio_cop']:,.0f}".replace(",", ".")
-        self._label(win, f"Plan seleccionado: Premium {plan['nombre'].lower()} · {price_text}{plan['periodo']}",
+        plan_title = "Plan Equipo" if plan["plan"] == "equipo" else f"Premium {plan['nombre'].lower()}"
+        self._label(win, f"Plan seleccionado: {plan_title} · {price_text}{plan['periodo']}",
                     color=C["muted"]).pack()
 
         body = self._card(win, padx=24, pady=20)
@@ -3594,6 +3686,9 @@ class CipherVaultApp:
         # Seguridad (izquierda) y funciones del plan (derecha) en una misma fila.
         sec_info_row = tk.Frame(f, bg=C["bg"])
         sec_info_row.pack(fill="x", pady=(12, 0))
+        # Auto-escritura (izquierda) y sincronización (derecha) en otra fila.
+        extra_row = tk.Frame(f, bg=C["bg"])
+        extra_row.pack(fill="x", pady=(12, 0))
         sec = self._card(sec_info_row, padx=24, pady=20)
         sec.pack(side="left", fill="both", expand=True, padx=(0, 6))
         self._label(sec, "Seguridad de la cuenta", bold=True).pack(anchor="w", pady=(0, 8))
@@ -3615,13 +3710,13 @@ class CipherVaultApp:
                 self._btn(sec, "🪟 Activar Windows Hello", self._enable_hello).pack(anchor="w")
 
             # auto-escritura
-            auto = self._card(f, padx=24, pady=20)
-            auto.pack(fill="x", pady=(12, 0))
+            auto = self._card(extra_row, padx=24, pady=16)
+            auto.pack(side="left", fill="both", expand=True, padx=(0, 6))
             self._label(auto, f"Auto-escritura ({cvx.AUTOTYPE_HOTKEY_LABEL})", bold=True).pack(anchor="w")
             self._label(auto, "Abre la página de inicio de sesión, haz clic en el campo de usuario y pulsa "
                               f"{cvx.AUTOTYPE_HOTKEY_LABEL}: CipherVault escribe tu usuario y contraseña. "
                               "Reconoce el sitio por el título de la ventana (servicio o página web guardados).",
-                        color=C["muted"], font_size=9, wraplength=self._s(620), justify="left"
+                        color=C["muted"], font_size=9, wraplength=self._s(440), justify="left"
                         ).pack(anchor="w", pady=(4, 8))
             self.settings_autotype = tk.BooleanVar(value=bool(self.config.get("autotype_enabled", True)))
             self.settings_enter = tk.BooleanVar(value=bool(self.config.get("autotype_enter", False)))
@@ -3634,8 +3729,38 @@ class CipherVaultApp:
             hotkey = getattr(self, "_hotkey", None)
             if hotkey and hotkey.error:
                 self._label(auto, f"⚠️ {hotkey.error}", color=C["warning"], font_size=9).pack(anchor="w", pady=(6, 0))
+            n_browsers = len(self.config.get("browser_clients", {}))
+            ext_row = tk.Frame(auto, bg=C["card"])
+            ext_row.pack(anchor="w", pady=(8, 0))
+            self._label(ext_row, f"🧩 Extensión del navegador: {n_browsers} conectada(s)" if n_browsers
+                        else "🧩 Extensión del navegador: sin conectar", color=C["muted"], font_size=9).pack(side="left")
+            if n_browsers:
+                self._btn(ext_row, "Desconectar", self._forget_browsers).pack(side="left", padx=6)
 
         # info versión
+        if feats.get("sync"):
+            sync_card = self._card(extra_row, padx=24, pady=16)
+            sync_card.pack(side="left", fill="both", expand=True, padx=(6, 0))
+            cfg = self._sync_config()
+            head = tk.Frame(sync_card, bg=C["card"])
+            head.pack(fill="x")
+            self._label(head, "Sincronizar entre tus equipos", bold=True).pack(side="left")
+            if cfg:
+                self._label(sync_card, f"📁 {cfg['path']}", color=C["muted"], font_size=9,
+                            wraplength=self._s(440), justify="left").pack(anchor="w", pady=(4, 0))
+                if getattr(self, "_sync_status", ""):
+                    self._label(sync_card, self._sync_status, color=C["muted"], font_size=9).pack(anchor="w")
+                row = tk.Frame(sync_card, bg=C["card"])
+                row.pack(anchor="w", pady=(6, 0))
+                self._btn(row, "🔄 Sincronizar ahora", lambda: self._sync_now(interactive=True)).pack(side="left", padx=(0, 6))
+                self._btn(row, "Desactivar", self._disable_sync).pack(side="left")
+            else:
+                self._label(sync_card, "Elige una carpeta de OneDrive, Google Drive o Dropbox. Tus contraseñas "
+                                       "se guardan ahí cifradas: nunca pasan por servidores de CipherVault.",
+                            color=C["muted"], font_size=9, wraplength=self._s(440), justify="left"
+                            ).pack(anchor="w", pady=(4, 6))
+                self._btn(sync_card, "📁 Elegir carpeta y activar", self._enable_sync).pack(anchor="w")
+
         info = self._card(sec_info_row, padx=24, pady=20)
         info.pack(side="left", fill="both", expand=True, padx=(6, 0))
         self._label(info, f"✅ Funciones de tu plan {feats['name']}:", bold=True).pack(anchor="w", pady=(0, 8))
@@ -4078,6 +4203,10 @@ class CipherVaultApp:
                              "WHERE id=?",
                              (_make_login_hash(new_key), new_salt, seal, user["id"]))
                 hello_was_on = bool(user.get("hello_wrapped"))
+                for column in ("sync_path", "sync_key", "team_priv", "team_path"):
+                    if user.get(column):
+                        conn.execute(f"UPDATE users SET {column}=? WHERE id=?",
+                                     (enc_text(new_vault, dec_text(old_vault, user[column])), user["id"]))
         except sqlite3.Error:
             log.exception("Fallo al cambiar la contraseña maestra")
             messagebox.showerror("Error", "No se pudo cambiar la contraseña. No se hicieron cambios.")
@@ -4423,8 +4552,33 @@ class CipherVaultApp:
         with db() as conn:
             rows = conn.execute("SELECT id, service, username, url FROM passwords WHERE user_id=?",
                                 (self.current_user["id"],)).fetchall()
-        return [{"id": pid, "service": dec_text(vault, svc), "username": dec_text(vault, uname),
-                 "url": dec_text(vault, url)} for pid, svc, uname, url in rows]
+        entries = [{"id": pid, "service": dec_text(vault, svc), "username": dec_text(vault, uname),
+                    "url": dec_text(vault, url)} for pid, svc, uname, url in rows]
+        if get_features(self.user_version).get("team") and self._team_path():
+            team = self._open_team(quiet=True)
+            if team:
+                entries += [{"id": f"t:{e['uid']}", "service": f"{e['service']} (equipo)",
+                             "username": e["username"], "url": e["url"]} for e in team.entries]
+        return entries
+
+    def _credentials_for(self, entry_id) -> tuple[str, str, str] | None:
+        """(usuario, contraseña, clave 2FA) de una entrada personal (id numérico) o del
+        equipo ("t:<uid>")."""
+        if isinstance(entry_id, str) and entry_id.startswith("t:"):
+            team = getattr(self, "_team", None) or self._open_team(quiet=True)
+            entry = next((e for e in (team.entries if team else []) if e["uid"] == entry_id[2:]), None)
+            return (entry["username"], entry["password"], entry["totp"]) if entry else None
+        vault = self.current_user["vault"]
+        with db() as conn:
+            row = conn.execute("SELECT username, password_encrypted, totp FROM passwords WHERE id=? AND user_id=?",
+                               (int(entry_id), self.current_user["id"])).fetchone()
+        if not row:
+            return None
+        try:
+            return (dec_text(vault, row[0]), vault.decrypt(row[1].encode("utf-8")).decode("utf-8"),
+                    dec_text(vault, row[2]))
+        except (InvalidToken, UnicodeDecodeError):
+            return None
 
     def _on_autotype(self, hwnd: int, title: str):
         """Se pulsó Ctrl+Alt+A sobre la ventana `title`: busca la contraseña que corresponde
@@ -4466,18 +4620,11 @@ class CipherVaultApp:
     def _autotype_entry(self, password_id: int, hwnd: int):
         if not self.current_user:
             return
-        vault = self.current_user["vault"]
-        with db() as conn:
-            row = conn.execute("SELECT username, password_encrypted FROM passwords WHERE id=? AND user_id=?",
-                               (password_id, self.current_user["id"])).fetchone()
-        if not row:
-            return
-        try:
-            username = dec_text(vault, row[0])
-            password = vault.decrypt(row[1].encode("utf-8")).decode("utf-8")
-        except (InvalidToken, UnicodeDecodeError):
+        creds = self._credentials_for(password_id)
+        if not creds:
             self._toast("No se pudo descifrar esa contraseña.")
             return
+        username, password, _totp = creds
         cvx.focus_window(hwnd)
         press_enter = bool(self.config.get("autotype_enter", False))
 
@@ -4589,6 +4736,701 @@ class CipherVaultApp:
             self._clear_failures(uname)
             self._open_session(user, auth)
         self._run_background(unlock, done)
+
+    # ─────────────────────────────────────────
+    #  SINCRONIZACIÓN ENTRE EQUIPOS (carpeta de OneDrive / Google Drive)
+    # ─────────────────────────────────────────
+    SYNC_INTERVAL_MS = 120_000
+
+    def _sync_config(self) -> dict | None:
+        """Ruta y clave del archivo de sincronización de la cuenta abierta, o None."""
+        if not self.current_user or not get_features(self.user_version).get("sync"):
+            return None
+        with db() as conn:
+            user = get_user_by_id(conn, self.current_user["id"])
+        if not user or not user.get("sync_path") or not user.get("sync_key"):
+            return None
+        vault = self.current_user["vault"]
+        try:
+            return {"path": Path(dec_text(vault, user["sync_path"])),
+                    "key": dec_text(vault, user["sync_key"]).encode("ascii"),
+                    "header": {"salt": base64.urlsafe_b64decode(user["sync_salt"].encode("ascii")),
+                               "iterations": int(user["sync_iterations"])}}
+        except (ValueError, TypeError, AttributeError):
+            return None
+
+    def _local_sync_state(self) -> tuple[list[dict], dict]:
+        vault = self.current_user["vault"]
+        with db() as conn:
+            rows = conn.execute("""SELECT uid,service,username,password_encrypted,notes,url,totp,category,
+                                          created_at,updated_at FROM passwords WHERE user_id=?""",
+                                (self.current_user["id"],)).fetchall()
+            tombs = dict(conn.execute("SELECT uid, deleted_at FROM sync_tombstones WHERE user_id=?",
+                                      (self.current_user["id"],)).fetchall())
+        entries = []
+        for uid, svc, uname, enc_pwd, notes, url, totp, cat, created, updated in rows:
+            try:
+                pwd = vault.decrypt(enc_pwd.encode("utf-8")).decode("utf-8")
+            except (InvalidToken, UnicodeDecodeError, AttributeError):
+                continue                       # ilegible: no se sincroniza
+            entries.append({"uid": uid, "service": dec_text(vault, svc), "username": dec_text(vault, uname),
+                            "password": pwd, "notes": dec_text(vault, notes), "url": dec_text(vault, url),
+                            "totp": dec_text(vault, totp), "category": cat or "General",
+                            "created_at": created or "", "updated_at": updated or ""})
+        return entries, tombs
+
+    def _apply_sync_result(self, local_entries: list[dict], merged: list[dict], tombs: dict) -> int:
+        """Deja la base local igual al resultado de la mezcla. Devuelve cuántos cambios hubo."""
+        upserts, deletes = cvs.plan_local_changes(local_entries, merged)
+        if not upserts and not deletes:
+            with db() as conn:
+                for uid, when in tombs.items():
+                    conn.execute("INSERT OR REPLACE INTO sync_tombstones(user_id,uid,deleted_at) VALUES(?,?,?)",
+                                 (self.current_user["id"], uid, when))
+            return 0
+        vault = self.current_user["vault"]
+        uid_self = self.current_user["id"]
+        with db() as conn:
+            for e in upserts:
+                strength, _ = self._eval_strength(e["password"])
+                values = (enc_text(vault, e["service"]), enc_text(vault, e["username"]),
+                          vault.encrypt(e["password"].encode("utf-8")).decode("ascii"), strength,
+                          e["category"][:40], enc_text(vault, e["notes"]), enc_text(vault, e["url"]),
+                          enc_text(vault, e["totp"]), e["updated_at"] or cvs.utc_now())
+                cur = conn.execute("""UPDATE passwords SET service=?,username=?,password_encrypted=?,strength=?,
+                                      category=?,notes=?,url=?,totp=?,updated_at=? WHERE user_id=? AND uid=?""",
+                                   values + (uid_self, e["uid"]))
+                if cur.rowcount == 0:
+                    conn.execute("""INSERT INTO passwords(service,username,password_encrypted,strength,category,
+                                    notes,url,totp,updated_at,user_id,uid,created_at)
+                                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                 values + (uid_self, e["uid"], e["created_at"] or cvs.utc_now()))
+            for uid in deletes:
+                conn.execute("DELETE FROM passwords WHERE user_id=? AND uid=?", (uid_self, uid))
+            for uid, when in tombs.items():
+                conn.execute("INSERT OR REPLACE INTO sync_tombstones(user_id,uid,deleted_at) VALUES(?,?,?)",
+                             (uid_self, uid, when))
+        return len(upserts) + len(deletes)
+
+    def _schedule_sync(self, delay_ms: int = 3000):
+        """Programa una sincronización (agrupa varios cambios seguidos en una sola)."""
+        if not hasattr(self, "root"):
+            return
+        job = getattr(self, "_sync_job", None)
+        if job:
+            try:
+                self.root.after_cancel(job)
+            except (tk.TclError, ValueError):
+                pass
+        self._sync_job = self.root.after(delay_ms, self._sync_now)
+
+    def _sync_now(self, interactive: bool = False):
+        """Sincroniza con el archivo de la carpeta (en un hilo) y refresca la lista si cambió algo."""
+        self._sync_job = None
+        cfg = self._sync_config()
+        if not cfg or getattr(self, "_sync_running", False):
+            return
+        if not cfg["path"].parent.is_dir():
+            if interactive:
+                messagebox.showerror("Sincronización", f"No se encuentra la carpeta:\n{cfg['path'].parent}\n\n"
+                                                      "¿Está abierto OneDrive / Google Drive?")
+            self._sync_status = "⚠️ No se encuentra la carpeta de sincronización"
+            return
+        self._sync_running = True
+        user_id = self.current_user["id"]
+        local_entries, local_tombs = self._local_sync_state()
+        device = platform.node() or "PC"
+
+        def work():
+            return cvs.sync_folder(cfg["path"], cfg["key"], cfg["header"], local_entries, local_tombs, device)
+
+        def done(result, error):
+            self._sync_running = False
+            if not self.current_user or self.current_user["id"] != user_id:
+                return
+            if error:
+                log.warning("Sincronización falló: %s", error)
+                self._sync_status = f"⚠️ {error}" if isinstance(error, cvs.SyncError) else "⚠️ No se pudo sincronizar"
+                if interactive:
+                    messagebox.showerror("Sincronización", self._sync_status[2:])
+                return
+            merged, tombs = result
+            try:
+                changes = self._apply_sync_result(local_entries, merged, tombs)
+            except sqlite3.Error:
+                log.exception("No se pudieron aplicar los cambios sincronizados")
+                return
+            self._sync_status = f"✅ Sincronizado {datetime.now():%d/%m %H:%M}"
+            if changes and hasattr(self, "tree"):
+                try:
+                    if self.tree.winfo_exists():
+                        self._load_passwords()
+                except tk.TclError:
+                    pass
+            if interactive:
+                messagebox.showinfo("Sincronización", f"Listo. Cambios recibidos de otros equipos: {changes}")
+        self._run_background(work, done)
+
+    def _sync_loop(self):
+        """Revisa la carpeta cada 2 minutos mientras haya una sesión abierta."""
+        if self.current_user:
+            self._sync_now()
+        self.root.after(self.SYNC_INTERVAL_MS, self._sync_loop)
+
+    def _enable_sync(self):
+        """Elige la carpeta (OneDrive, Google Drive, Dropbox…) y activa la sincronización."""
+        if not get_features(self.user_version).get("sync"):
+            messagebox.showinfo("Plan Premium", "La sincronización entre equipos está en Premium.")
+            return
+        folder = filedialog.askdirectory(
+            title="Elige una carpeta de OneDrive, Google Drive o Dropbox",
+            initialdir=str(next((p for p in (Path.home() / "OneDrive", Path.home() / "Google Drive",
+                                             Path.home() / "Dropbox") if p.is_dir()), Path.home())))
+        if not folder:
+            return
+        pwd = self._ask_master_password()
+        if not pwd:
+            return
+        path = Path(folder) / cvs.sync_file_name(self.current_user["username"])
+        try:
+            header = cvs.sync_file_info(path)
+            if header:
+                key = cvs.derive_sync_key(pwd, header["salt"], header["iterations"])
+                cvs.read_sync(path, key)          # comprueba que la contraseña abre el archivo
+            else:
+                header = cvs.new_sync_header(VAULT_KDF_ITERATIONS)
+                key = cvs.derive_sync_key(pwd, header["salt"], header["iterations"])
+        except cvs.SyncError as exc:
+            messagebox.showerror("Sincronización", str(exc))
+            return
+        vault = self.current_user["vault"]
+        with db() as conn:
+            conn.execute("UPDATE users SET sync_path=?, sync_key=?, sync_salt=?, sync_iterations=? WHERE id=?",
+                         (enc_text(vault, str(path)), enc_text(vault, key.decode("ascii")),
+                          base64.urlsafe_b64encode(header["salt"]).decode("ascii"), str(header["iterations"]),
+                          self.current_user["id"]))
+        log.info("Sincronización activada en %s", path.parent)
+        messagebox.showinfo("✅ Sincronización activada",
+                            f"Tus contraseñas se guardan cifradas en:\n{path}\n\n"
+                            "En tu otro equipo: entra con la MISMA cuenta y contraseña maestra, ve a "
+                            "Configuración → Sincronización y elige esta misma carpeta.")
+        self._sync_now(interactive=True)
+        self._tab_settings()
+
+    def _disable_sync(self):
+        with db() as conn:
+            conn.execute("UPDATE users SET sync_path=NULL, sync_key=NULL, sync_salt=NULL, sync_iterations=NULL "
+                         "WHERE id=?", (self.current_user["id"],))
+        self._sync_status = ""
+        messagebox.showinfo("Sincronización", "Sincronización desactivada en este equipo. El archivo de la "
+                                              "carpeta no se borró.")
+        self._tab_settings()
+
+    # ─────────────────────────────────────────
+    #  BÓVEDA DE EQUIPO (plan Equipo)
+    # ─────────────────────────────────────────
+    def _team_keys(self) -> tuple[bytes, bytes]:
+        """(privada, pública) X25519 de la cuenta; se crean la primera vez."""
+        vault = self.current_user["vault"]
+        with db() as conn:
+            user = get_user_by_id(conn, self.current_user["id"])
+            if user.get("team_priv") and user.get("team_pub"):
+                priv = base64.urlsafe_b64decode(dec_text(vault, user["team_priv"]).encode("ascii"))
+                return priv, base64.urlsafe_b64decode(user["team_pub"].encode("ascii"))
+            priv, pub = cvs.new_member_keypair()
+            conn.execute("UPDATE users SET team_priv=?, team_pub=? WHERE id=?",
+                         (enc_text(vault, base64.urlsafe_b64encode(priv).decode("ascii")),
+                          base64.urlsafe_b64encode(pub).decode("ascii"), user["id"]))
+            return priv, pub
+
+    def _team_path(self) -> Path | None:
+        with db() as conn:
+            user = get_user_by_id(conn, self.current_user["id"])
+        if not user.get("team_path"):
+            return None
+        return Path(dec_text(self.current_user["vault"], user["team_path"]))
+
+    def _set_team_path(self, path: Path | None):
+        vault = self.current_user["vault"]
+        with db() as conn:
+            conn.execute("UPDATE users SET team_path=? WHERE id=?",
+                         (enc_text(vault, str(path)) if path else None, self.current_user["id"]))
+
+    def _open_team(self, quiet: bool = False) -> "cvs.TeamVault | None":
+        path = self._team_path()
+        if not path:
+            return None
+        try:
+            team = cvs.TeamVault.open(path, self._team_keys()[0])
+        except FileNotFoundError:
+            if not quiet:
+                messagebox.showerror("Equipo", f"No se encuentra el archivo del equipo:\n{path}\n\n"
+                                               "¿Está abierta la carpeta compartida (OneDrive/Drive/red)?")
+            return None
+        except cvs.SyncError as exc:
+            if not quiet:
+                messagebox.showerror("Equipo", str(exc))
+            return None
+        self._team = team
+        return team
+
+    def _tab_team(self):
+        """Pestaña de la bóveda compartida del equipo."""
+        self._clear_content()
+        f = self.content_frame
+        if not get_features(self.user_version).get("team"):
+            self._label(f, "👥 Bóveda de equipo", font_size=20, bold=True).pack(anchor="w")
+            self._plan_banner(f, C["card"], "Disponible en el plan Equipo",
+                              "Comparte contraseñas de la empresa con tus empleados, con roles y permisos.",
+                              lambda: self._show_plans_screen("equipo_mensual"), "👥 Ver plan Equipo")
+            return
+        priv, pub = self._team_keys()
+        path = self._team_path()
+        team = self._open_team(quiet=True) if path else None
+        if not team:
+            self._label(f, "👥 Bóveda de equipo", font_size=20, bold=True).pack(anchor="w", pady=(0, 12))
+            if path:
+                self._label(f, f"⚠️ No se pudo abrir el equipo guardado ({path.name}). Revisa que la carpeta "
+                               "compartida esté disponible o vuelve a unirte.",
+                            color=C["warning"], font_size=10, wraplength=self._s(800), justify="left"
+                            ).pack(anchor="w", pady=(0, 10))
+            card = self._card(f, padx=24, pady=20)
+            card.pack(fill="x")
+            self._label(card, "Tu código de miembro", bold=True).pack(anchor="w")
+            self._label(card, "Envíaselo al administrador del equipo para que te agregue. No es secreto: "
+                              "solo sirve para que puedas abrir la bóveda del equipo.",
+                        color=C["muted"], font_size=9, wraplength=self._s(760), justify="left").pack(anchor="w")
+            code = cvs.member_code(pub)
+            row = tk.Frame(card, bg=C["card"])
+            row.pack(anchor="w", pady=8)
+            entry = ttk.Entry(row, width=64)
+            entry.insert(0, code)
+            entry.config(state="readonly")
+            entry.pack(side="left")
+            self._btn(row, "📋 Copiar", lambda: [self.root.clipboard_clear(), self.root.clipboard_append(code),
+                                                 messagebox.showinfo("✅", "Código copiado.")]).pack(side="left", padx=6)
+            actions = self._card(f, padx=24, pady=20)
+            actions.pack(fill="x", pady=(12, 0))
+            self._label(actions, "¿Cómo funciona?", bold=True).pack(anchor="w")
+            for line in ("1. El administrador crea el equipo en una carpeta compartida (OneDrive, Google Drive "
+                         "o una carpeta de red de la empresa).",
+                         "2. Cada empleado le envía su código de miembro y el administrador lo agrega con un rol.",
+                         "3. El empleado pulsa «Unirme a un equipo» y elige el archivo .cvteam de esa carpeta."):
+                self._label(actions, line, color=C["muted"], font_size=10, wraplength=self._s(760),
+                            justify="left").pack(anchor="w", pady=1)
+            btns = tk.Frame(actions, bg=C["card"])
+            btns.pack(anchor="w", pady=(12, 0))
+            self._btn(btns, "➕ Crear equipo", self._team_create, "Primary.TButton").pack(side="left", padx=(0, 8))
+            self._btn(btns, "🔗 Unirme a un equipo", self._team_join).pack(side="left")
+            return
+
+        role = cvs.ROLES.get(team.my_role, team.my_role)
+        self._label(f, f"👥 {team.name}", font_size=20, bold=True).pack(anchor="w")
+        self._label(f, f"Tu rol: {role}  ·  {len(team.members)} miembro(s)  ·  {team.path.name}",
+                    color=C["muted"]).pack(anchor="w", pady=(0, 10))
+        ctrl = tk.Frame(f, bg=C["bg"])
+        ctrl.pack(fill="x", pady=(0, 8))
+        if team.can_edit:
+            self._btn(ctrl, "➕ Agregar", lambda: self._team_entry_form(None), "Primary.TButton").pack(side="left", padx=(0, 6))
+        self._btn(ctrl, "👁️ Ver", self._team_view).pack(side="left", padx=3)
+        if team.can_edit:
+            self._btn(ctrl, "✏️ Editar", lambda: self._team_entry_form(self._team_selected())).pack(side="left", padx=3)
+            self._btn(ctrl, "🗑️ Eliminar", self._team_delete, "Danger.TButton").pack(side="left", padx=3)
+        self._btn(ctrl, "🔄 Actualizar", self._tab_team).pack(side="left", padx=3)
+        if team.is_admin:
+            self._btn(ctrl, "👤 Miembros", self._team_members).pack(side="left", padx=3)
+        self._btn(ctrl, "🚪 Salir del equipo", self._team_leave).pack(side="right")
+
+        tbl = tk.Frame(f, bg=C["card"])
+        tbl.pack(fill="both", expand=True)
+        cols = ("Servicio", "Usuario", "Categoría", "Actualizado")
+        self.team_tree = ttk.Treeview(tbl, columns=cols, show="headings", height=18)
+        for col, width in zip(cols, (220, 220, 140, 140)):
+            self.team_tree.heading(col, text=col)
+            self.team_tree.column(col, width=self._s(width))
+        self.team_tree.pack(side="left", fill="both", expand=True, padx=8, pady=8)
+        sb = ttk.Scrollbar(tbl, orient="vertical", command=self.team_tree.yview)
+        self.team_tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        for e in sorted(team.entries, key=lambda x: x["service"].lower()):
+            self.team_tree.insert("", "end", iid=e["uid"],
+                                  values=(e["service"], e["username"], e["category"], e["updated_at"][:10]))
+        self.team_tree.bind("<Double-1>", lambda _e: self._team_view())
+
+    def _team_selected(self) -> dict | None:
+        team = getattr(self, "_team", None)
+        sel = self.team_tree.selection() if hasattr(self, "team_tree") else ()
+        if not team or not sel:
+            messagebox.showwarning("Sin selección", "Selecciona una entrada del equipo.")
+            return None
+        return next((e for e in team.entries if e["uid"] == sel[0]), None)
+
+    def _team_create(self):
+        folder = filedialog.askdirectory(title="Elige la carpeta compartida del equipo (OneDrive, Drive o red)")
+        if not folder:
+            return
+        name = simpledialog.askstring("Crear equipo", "Nombre del equipo (por ejemplo, el de tu empresa):")
+        if not name or not name.strip():
+            return
+        _, pub = self._team_keys()
+        try:
+            team = cvs.TeamVault.create(Path(folder), name, pub, self.current_user["username"],
+                                        self.current_user.get("email", ""))
+        except (cvs.SyncError, OSError) as exc:
+            messagebox.showerror("Equipo", str(exc))
+            return
+        self._set_team_path(team.path)
+        log.info("Equipo creado: %s", team.path)
+        messagebox.showinfo("✅ Equipo creado",
+                            f"Se creó «{team.name}» en:\n{team.path}\n\nComparte esa carpeta con tus empleados "
+                            "y agrégalos en «Miembros» con el código que te envíe cada uno.")
+        self._tab_team()
+
+    def _team_join(self):
+        path = filedialog.askopenfilename(title="Elige el archivo del equipo (.cvteam)",
+                                          filetypes=[("Bóveda de equipo de CipherVault", "*.cvteam")])
+        if not path:
+            return
+        try:
+            team = cvs.TeamVault.open(Path(path), self._team_keys()[0])
+        except (cvs.SyncError, OSError) as exc:
+            messagebox.showerror("Equipo", str(exc))
+            return
+        self._set_team_path(Path(path))
+        messagebox.showinfo("✅ Te uniste", f"Ahora ves las contraseñas de «{team.name}».")
+        self._tab_team()
+
+    def _team_leave(self):
+        if not messagebox.askyesno("Salir del equipo", "¿Dejar de ver este equipo en este equipo (PC)? "
+                                                       "El administrador sigue pudiendo agregarte de nuevo."):
+            return
+        self._set_team_path(None)
+        self._team = None
+        self._tab_team()
+
+    def _team_save(self, team) -> bool:
+        try:
+            team.save_merged(self._team_keys()[0])
+            return True
+        except (cvs.SyncError, OSError) as exc:
+            messagebox.showerror("Equipo", f"No se pudo guardar: {exc}")
+            return False
+
+    def _team_view(self):
+        entry = self._team_selected()
+        if not entry:
+            return
+        win = tk.Toplevel(self.root)
+        win.title(f"👥 {entry['service']}")
+        self._set_popup_geometry(win, 540, 440)
+        win.configure(bg=C["bg"])
+        win.transient(self.root)
+        self._label(win, f"👥 {entry['service']}", font_size=17, bold=True, color=C["primary"]).pack(pady=(18, 8))
+        body = self._card(win, padx=22, pady=18)
+        body.pack(fill="both", expand=True, padx=20, pady=(0, 12))
+        rows = [("👤 Usuario", entry["username"] or "—"), ("🌐 Página web", entry["url"] or "—"),
+                ("📂 Categoría", entry["category"]), ("📝 Notas", entry["notes"] or "—")]
+        for i, (lbl, val) in enumerate(rows):
+            self._label(body, lbl, bold=True, color=C["muted"]).grid(row=i, column=0, sticky="nw", pady=4)
+            self._label(body, val, wraplength=self._s(300), justify="left").grid(row=i, column=1, sticky="w", padx=10, pady=4)
+        btns = tk.Frame(body, bg=C["card"])
+        btns.grid(row=len(rows), column=0, columnspan=2, pady=(12, 0), sticky="w")
+        self._btn(btns, "📋 Copiar contraseña", lambda: [self._copy_secret(entry["password"]),
+                                                       messagebox.showinfo("✅", "Copiada (se borra en 30 s).")]
+                  ).pack(side="left", padx=(0, 6))
+        if entry["username"]:
+            self._btn(btns, "📋 Copiar usuario", lambda: [self.root.clipboard_clear(),
+                                                        self.root.clipboard_append(entry["username"])]
+                      ).pack(side="left", padx=3)
+        if entry["totp"]:
+            def copy_code():
+                try:
+                    self._copy_secret(cvx.totp_code(entry["totp"])[0])
+                    messagebox.showinfo("✅", "Código 2FA copiado.")
+                except ValueError:
+                    messagebox.showerror("2FA", "La clave 2FA guardada no es válida.")
+            self._btn(btns, "🔢 Copiar código 2FA", copy_code).pack(side="left", padx=3)
+        self._btn(win, "Cerrar", win.destroy).pack(pady=(0, 12))
+
+    def _team_entry_form(self, entry: dict | None):
+        team = getattr(self, "_team", None)
+        if not team:
+            return
+        data = dict(entry or {})
+        win = tk.Toplevel(self.root)
+        win.title("Entrada del equipo")
+        self._set_popup_geometry(win, 560, 560)
+        win.configure(bg=C["bg"])
+        win.transient(self.root)
+        self._label(win, "✏️ Editar entrada" if entry else "➕ Nueva entrada del equipo",
+                    font_size=16, bold=True).pack(pady=(18, 8))
+        body = self._card(win, padx=22, pady=18)
+        body.pack(fill="both", expand=True, padx=20, pady=(0, 10))
+        fields = [("service", "Servicio *"), ("url", "Página web"), ("username", "Usuario"),
+                  ("password", "Contraseña *"), ("totp", "Clave 2FA"), ("category", "Categoría")]
+        vars_ = {}
+        for i, (key, label) in enumerate(fields):
+            self._label(body, label, bold=True, color=C["muted"]).grid(row=i, column=0, sticky="w", pady=5)
+            var = tk.StringVar(value=data.get(key, "") or ("General" if key == "category" else ""))
+            ttk.Entry(body, textvariable=var, width=34, show="•" if key == "password" else "").grid(
+                row=i, column=1, padx=10, pady=5)
+            vars_[key] = var
+        self._label(body, "Notas", bold=True, color=C["muted"]).grid(row=len(fields), column=0, sticky="nw", pady=5)
+        notes = tk.Text(body, height=3, width=34, bg=C["card2"], fg=C["text"], font=("Segoe UI", 10))
+        notes.grid(row=len(fields), column=1, padx=10, pady=5)
+        notes.insert("1.0", data.get("notes", ""))
+
+        def save():
+            values = {k: v.get().strip() for k, v in vars_.items()}
+            values["password"] = vars_["password"].get()
+            values["notes"] = notes.get("1.0", "end-1c").strip()
+            if not values["service"] or not values["password"]:
+                messagebox.showerror("Faltan datos", "Servicio y contraseña son obligatorios.")
+                return
+            if values["totp"]:
+                try:
+                    cvx.parse_totp(values["totp"])
+                except ValueError as exc:
+                    messagebox.showerror("Clave 2FA no válida", str(exc))
+                    return
+            values["uid"] = data.get("uid", "")
+            values["created_at"] = data.get("created_at", "")
+            try:
+                team.upsert(values)
+            except cvs.SyncError as exc:
+                messagebox.showerror("Equipo", str(exc))
+                return
+            if self._team_save(team):
+                win.destroy()
+                self._tab_team()
+        btns = tk.Frame(win, bg=C["bg"])
+        btns.pack(pady=(0, 12))
+        self._btn(btns, "💾 Guardar", save, "Primary.TButton").pack(side="left", padx=6)
+        self._btn(btns, "Cancelar", win.destroy).pack(side="left", padx=6)
+
+    def _team_delete(self):
+        team = getattr(self, "_team", None)
+        entry = self._team_selected()
+        if not team or not entry:
+            return
+        if not messagebox.askyesno("Eliminar", f"¿Eliminar «{entry['service']}» para TODO el equipo?"):
+            return
+        try:
+            team.delete(entry["uid"])
+        except cvs.SyncError as exc:
+            messagebox.showerror("Equipo", str(exc))
+            return
+        if self._team_save(team):
+            self._tab_team()
+
+    def _team_members(self):
+        team = getattr(self, "_team", None)
+        if not team or not team.is_admin:
+            return
+        win = tk.Toplevel(self.root)
+        win.title("Miembros del equipo")
+        self._set_popup_geometry(win, 720, 520)
+        win.configure(bg=C["bg"])
+        win.transient(self.root)
+        self._label(win, f"👤 Miembros de {team.name}", font_size=16, bold=True).pack(pady=(18, 8))
+        tree = ttk.Treeview(win, columns=("Nombre", "Email", "Rol"), show="headings", height=10)
+        for col, width in (("Nombre", 200), ("Email", 260), ("Rol", 140)):
+            tree.heading(col, text=col)
+            tree.column(col, width=self._s(width))
+        tree.pack(fill="both", expand=True, padx=20)
+        for fp, m in team.members.items():
+            label = cvs.ROLES.get(m["role"], m["role"]) + (" (tú)" if fp == team.my_fp else "")
+            tree.insert("", "end", iid=fp, values=(m["name"], m.get("email", ""), label))
+
+        def add():
+            code = simpledialog.askstring("Agregar miembro", "Pega el código de miembro (CVM1-…) que te envió:",
+                                          parent=win)
+            if not code:
+                return
+            name = simpledialog.askstring("Agregar miembro", "Nombre de la persona:", parent=win) or ""
+            email = simpledialog.askstring("Agregar miembro", "Email (opcional):", parent=win) or ""
+            role = self._choose("Rol", "¿Qué puede hacer esta persona?", [
+                ("lector", "👁️ Solo ver y copiar"), ("editor", "✏️ Ver, agregar y editar"),
+                ("admin", "🛡️ Administrador (también maneja miembros)")])
+            if not role:
+                return
+            try:
+                team.add_member(code, name, email, role)
+            except cvs.SyncError as exc:
+                messagebox.showerror("Agregar miembro", str(exc), parent=win)
+                return
+            if self._team_save(team):
+                win.destroy()
+                messagebox.showinfo("✅ Miembro agregado", f"{name or 'La persona'} ya puede unirse con "
+                                                          f"«Unirme a un equipo» eligiendo {team.path.name}.")
+                self._team_members()
+
+        def change_role():
+            sel = tree.selection()
+            if not sel:
+                return
+            role = self._choose("Cambiar rol", "Nuevo rol:", [
+                ("lector", "👁️ Solo lectura"), ("editor", "✏️ Editor"), ("admin", "🛡️ Administrador")])
+            if not role:
+                return
+            try:
+                team.set_role(sel[0], role)
+            except cvs.SyncError as exc:
+                messagebox.showerror("Rol", str(exc), parent=win)
+                return
+            if self._team_save(team):
+                win.destroy()
+                self._team_members()
+
+        def remove():
+            sel = tree.selection()
+            if not sel:
+                return
+            name = team.members.get(sel[0], {}).get("name", "")
+            if not messagebox.askyesno("Quitar miembro",
+                                       f"¿Quitar a {name}? Se cambiará la clave del equipo para que ya no pueda "
+                                       "abrirlo.\n\nImportante: lo que ya vio no se puede borrar de su memoria. "
+                                       "Cambia las contraseñas importantes que tenía acceso.", parent=win):
+                return
+            try:
+                team.remove_member(sel[0])
+            except cvs.SyncError as exc:
+                messagebox.showerror("Quitar miembro", str(exc), parent=win)
+                return
+            if self._team_save(team):
+                win.destroy()
+                self._team_members()
+
+        btns = tk.Frame(win, bg=C["bg"])
+        btns.pack(pady=12)
+        self._btn(btns, "➕ Agregar miembro", add, "Primary.TButton").pack(side="left", padx=5)
+        self._btn(btns, "🔁 Cambiar rol", change_role).pack(side="left", padx=5)
+        self._btn(btns, "🚫 Quitar", remove, "Danger.TButton").pack(side="left", padx=5)
+        self._btn(btns, "Cerrar", win.destroy).pack(side="left", padx=5)
+
+    # ─────────────────────────────────────────
+    #  EXTENSIÓN DEL NAVEGADOR (puente local)
+    # ─────────────────────────────────────────
+    def _start_bridge(self):
+        """Abre el servidor local para la extensión y registra el puente en Chrome/Edge/Brave."""
+        self._bridge_queue = queue.Queue()
+        self._bridge = cv_bridge.BridgeServer(self._bridge_handle)
+        if not self._bridge.start():
+            log.warning("No se pudo abrir el puente de la extensión")
+        if IS_WINDOWS and EXTENSION_IDS:
+            try:
+                if IS_FROZEN:
+                    host = str(Path(sys.executable).with_name("CipherVaultBridge.exe"))
+                else:
+                    host = cv_bridge.dev_host_script(sys.executable, str(Path(BASE_PATH) / "ciphervault_bridge.py"))
+                cv_bridge.register_native_host(host, EXTENSION_IDS)
+            except OSError as exc:
+                log.warning("No se pudo registrar el puente del navegador: %s", exc)
+        self.root.after(200, self._poll_bridge)
+
+    def _poll_bridge(self):
+        """Atiende en el hilo de Tk lo que el servidor no puede hacer solo (ventanas)."""
+        try:
+            while True:
+                kind, payload, event, holder = self._bridge_queue.get_nowait()
+                try:
+                    if kind == "associate":
+                        holder["ok"] = messagebox.askyesno(
+                            "Conectar extensión",
+                            f"Una extensión del navegador quiere conectarse a CipherVault:\n\n«{payload}»\n\n"
+                            "Si acabas de pulsar «Conectar» en la extensión de CipherVault, acepta. "
+                            "Si no fuiste tú, rechaza.")
+                    elif kind == "show":
+                        self.root.deiconify()
+                        self.root.lift()
+                        self.root.focus_force()
+                        holder["ok"] = True
+                finally:
+                    event.set()
+        except queue.Empty:
+            pass
+        self.root.after(200, self._poll_bridge)
+
+    def _ask_tk(self, kind: str, payload: str = "", timeout: float = 60) -> bool:
+        event, holder = threading.Event(), {"ok": False}
+        self._bridge_queue.put((kind, payload, event, holder))
+        event.wait(timeout)
+        return bool(holder["ok"])
+
+    def _browser_entries(self) -> list[dict]:
+        """Entradas personales y del equipo con página web, para la extensión."""
+        vault = self.current_user["vault"]
+        with db() as conn:
+            rows = conn.execute("SELECT id, service, username, url FROM passwords WHERE user_id=?",
+                                (self.current_user["id"],)).fetchall()
+        entries = [{"id": pid, "service": dec_text(vault, s), "username": dec_text(vault, u),
+                    "url": dec_text(vault, url)} for pid, s, u, url in rows]
+        if get_features(self.user_version).get("team") and self._team_path():
+            team = self._open_team(quiet=True)
+            if team:
+                entries += [{"id": f"t:{e['uid']}", "service": f"{e['service']} (equipo)",
+                             "username": e["username"], "url": e["url"]} for e in team.entries]
+        return entries
+
+    def _bridge_handle(self, request: dict) -> dict:
+        """Peticiones de la extensión (se ejecuta en el hilo del servidor)."""
+        action = str(request.get("action", ""))
+        client_id = str(request.get("client_id", ""))[:64]
+        client_key = str(request.get("client_key", ""))
+        clients = self.config.setdefault("browser_clients", {})
+        paired = bool(client_id) and hmac.compare_digest(
+            clients.get(client_id, ""), cv_bridge.client_key_hash(client_key)) and bool(client_key)
+        if action == "status":
+            return {"ok": True, "app": APP_NAME, "version": APP_VERSION, "associated": paired,
+                    "unlocked": bool(self.current_user)}
+        if action == "associate":
+            if paired:
+                return {"ok": True}
+            if len(client_key) < 32 or not client_id:
+                return {"ok": False, "error": "bad_request"}
+            label = str(request.get("browser", "Navegador"))[:60]
+            if not self._ask_tk("associate", label):
+                return {"ok": False, "error": "rejected"}
+            clients[client_id] = cv_bridge.client_key_hash(client_key)
+            self._save_config()
+            log.info("Extensión del navegador emparejada (%s)", label)
+            return {"ok": True}
+        if not paired:
+            return {"ok": False, "error": "not_associated"}
+        if action == "show":
+            self._ask_tk("show", timeout=5)
+            return {"ok": True}
+        if not self.current_user:
+            return {"ok": False, "error": "locked"}
+        url = str(request.get("url", ""))[:2000]
+        matches = cvx.match_url(url, self._browser_entries())
+        if action == "logins":
+            return {"ok": True, "items": [{"id": e["id"], "service": e["service"], "username": e["username"],
+                                           "weak": e["weak"]} for e in matches[:20]]}
+        if action == "credentials":
+            wanted = request.get("id")
+            entry = next((e for e in matches if e["id"] == wanted), None)
+            if not entry or (entry["weak"] and not request.get("confirm_weak")):
+                return {"ok": False, "error": "no_match"}
+            creds = self._credentials_for(wanted)
+            if not creds:
+                return {"ok": False, "error": "unreadable"}
+            username, password, totp = creds
+            code = ""
+            if totp and get_features(self.user_version).get("totp"):
+                try:
+                    code = cvx.totp_code(totp)[0]
+                except ValueError:
+                    code = ""
+            return {"ok": True, "username": username, "password": password, "totp": code}
+        return {"ok": False, "error": "unknown_action"}
+
+    def _forget_browsers(self):
+        self.config["browser_clients"] = {}
+        self._save_config()
+        messagebox.showinfo("Extensión", "Se desconectaron todas las extensiones. Para volver a usarla, "
+                                         "pulsa «Conectar» en la extensión.")
+        self._tab_settings()
 
     def _logout(self):
         """Cierra la sesión actual (olvida la clave de la bóveda) y regresa a la pantalla de login."""
