@@ -1,0 +1,8 @@
+cryptography>=44,<51
+pyinstaller>=6.14,<7
+# Windows Hello (opcional: sin estos paquetes la app funciona y solo oculta esa opción)
+winrt-runtime>=3.2,<4; sys_platform == "win32"
+winrt-Windows.Foundation>=3.2,<4; sys_platform == "win32"
+winrt-Windows.Security.Credentials>=3.2,<4; sys_platform == "win32"
+winrt-Windows.Security.Cryptography>=3.2,<4; sys_platform == "win32"
+winrt-Windows.Storage.Streams>=3.2,<4; sys_platform == "win32"
