@@ -25,11 +25,10 @@ import Gestor_contrasenas_secure as gcs  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def isolated_data(tmp_path, monkeypatch):
-    """Base de datos, archivo de instalación y registro propios de cada prueba,
+    """Base de datos y configuración propias de cada prueba,
     y PBKDF2 con pocas iteraciones para que la suite sea rápida."""
     monkeypatch.setattr(gcs, "DATA_PATH", tmp_path)
     monkeypatch.setattr(gcs, "DB_FILE", str(tmp_path / "passwords.db"))
-    monkeypatch.setattr(gcs, "INSTALL_FILE", str(tmp_path / "install_date.txt"))
     monkeypatch.setattr(gcs, "CONFIG_FILE", str(tmp_path / "app_config.json"))
     monkeypatch.setattr(gcs, "VAULT_KDF_ITERATIONS", 1000)
     return tmp_path

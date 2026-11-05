@@ -379,49 +379,6 @@ def match_entries(window_title: str, entries: list[dict]) -> list[dict]:
     return [entry for _, entry in scored]
 
 
-def _base_domain(host: str) -> str:
-    """'mail.google.com' → 'google.com'; 'www.banco.com.co' → 'banco.com.co'."""
-    parts = [p for p in (host or "").lower().split(".") if p]
-    if len(parts) >= 3 and len(parts[-1]) == 2 and parts[-2] in ("com", "co", "gov", "edu", "org", "net", "mil"):
-        return ".".join(parts[-3:])
-    return ".".join(parts[-2:])
-
-
-def match_url(url: str, entries: list[dict]) -> list[dict]:
-    """Entradas que corresponden a la página `url` (para la extensión del navegador),
-    de la más segura a la menos: mismo dominio > subdominio > mismo sitio > nombre.
-    Una entrada CON página web guardada solo coincide por dominio (nunca por nombre), para
-    no rellenar sitios falsos como «github.com.sitio-falso.io». Las que coinciden solo por
-    el nombre llevan "weak": True."""
-    host = _host_from_url(url)
-    if not host:
-        return []
-    base = _base_domain(host)
-    scored = []
-    for entry in entries:
-        ehost = _host_from_url(entry.get("url", ""))
-        if not ehost and "." in (entry.get("service") or "") and " " not in entry.get("service", "").strip():
-            ehost = _host_from_url(entry["service"])
-        score = 0
-        if ehost:
-            if ehost == host:
-                score = 100
-            elif host.endswith("." + ehost) or ehost.endswith("." + host):
-                score = 80
-            elif _base_domain(ehost) == base:
-                score = 60
-        if not score and not ehost:
-            # Sin página web guardada solo se puede adivinar por el nombre: se marca como
-            # "dudosa" para que la extensión pida confirmar (protege contra phishing).
-            word = re.sub(r"[^a-z0-9]", "", (entry.get("service") or "").lower())
-            if len(word) >= 4 and word not in _GENERIC_TITLE_WORDS and word in host.replace(".", "").replace("-", ""):
-                score = 30
-        if score:
-            scored.append((score, {**entry, "weak": score < 60}))
-    scored.sort(key=lambda pair: -pair[0])
-    return [entry for _, entry in scored]
-
-
 def autotype_supported() -> bool:
     return os.name == "nt"
 

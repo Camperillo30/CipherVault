@@ -14,9 +14,9 @@
 ## Descargar
 
 <p align="center">
-  <a href="https://github.com/Camperillo30/CipherVault/releases/download/v3.1.0/CipherVault-Setup.exe"><b>⬇️ Descargar para Windows</b></a> (Windows 10 y 11)
+  <a href="https://github.com/Camperillo30/CipherVault/releases/download/v3.2.0-beta/CipherVault-Setup.exe"><b>⬇️ Descargar para Windows</b></a> (Windows 10 y 11)
   &nbsp;·&nbsp;
-  <a href="https://github.com/Camperillo30/CipherVault/releases/download/v3.1.0/CipherVault-macOS.zip"><b>⬇️ Descargar para Mac</b></a> (macOS 11 o superior, chip Apple M1 o más nuevo)
+  <a href="https://github.com/Camperillo30/CipherVault/releases/download/v3.2.0-beta/CipherVault-macOS.zip"><b>⬇️ Descargar para Mac</b></a> (macOS 11 o superior, chip Apple M1 o más nuevo)
   <br><sub><a href="https://github.com/Camperillo30/CipherVault/releases">Todas las versiones</a></sub>
 </p>
 
@@ -33,7 +33,7 @@ CipherVault todavía no tiene firma de código, así que SmartScreen muestra ese
 2. Ábrelo una vez (aparecerá el aviso) y ciérralo.
 3. Ve a **Ajustes del Sistema → Privacidad y seguridad**, baja hasta el mensaje de CipherVault y pulsa **Abrir de todas formas**.
 
-En Mac no están la auto-escritura (Ctrl + Alt + A), Windows Hello ni la extensión del navegador; todo lo demás funciona igual (bóveda, 2FA, sincronización, equipo, importar CSV).
+En Mac no están la auto-escritura (Ctrl + Alt + A) ni Windows Hello; todo lo demás funciona igual (bóveda, 2FA, sincronización, equipo, importar CSV).
 </details>
 
 ![Panel principal de CipherVault](docs/captura-inicio.png)
@@ -47,8 +47,7 @@ En Mac no están la auto-escritura (Ctrl + Alt + A), Windows Hello ni la extensi
 - **Importar desde Chrome, Edge, Firefox, Bitwarden, LastPass, 1Password, KeePass y Apple** (CSV), y exportar a CSV o a `.cvault` cifrado.
 - **Kit de emergencia en PDF** para imprimir y anotar la contraseña maestra a mano.
 - **Sincronización entre equipos** por una carpeta de OneDrive, Google Drive o Dropbox: un archivo `.cvsync` cifrado, sin servidores propios. Mezcla los cambios de cada equipo y propaga los borrados.
-- **Bóveda de equipo (plan Equipo).** Un archivo `.cvteam` en una carpeta compartida. El administrador agrega a cada empleado con su código de miembro y un rol (administrador, editor o solo lectura). Al quitar a alguien, la clave del equipo cambia.
-- **Extensión para Chrome, Edge y Brave.** Rellena usuario y contraseña con un clic o con Alt + Shift + V. Solo propone cuentas del sitio abierto y avisa si la dirección no coincide.
+- **Bóveda de equipo (plan Equipo).** Un archivo `.cvteam` en una carpeta compartida. El administrador agrega a cada empleado con su código de miembro y un rol (administrador, editor o solo lectura). Al quitar a alguien, la clave del equipo cambia. El administrador ve un **registro de actividad** (quién creó, editó, borró o copió cada contraseña) y un **informe de seguridad del equipo** (claves débiles, repetidas, sin cambiar en 6 meses o sin 2FA).
 - **Generador de contraseñas.** Longitud configurable, mayúsculas, minúsculas, números y símbolos, con medidor de fortaleza en vivo.
 - **Análisis de seguridad.** Distribución de fortaleza, contraseñas repetidas, recomendaciones y búsqueda opcional en filtraciones públicas (Have I Been Pwned) sin enviar nunca la contraseña.
 - **Bloqueos.** Bloqueo por intentos fallidos que sobrevive a reiniciar la app y bloqueo automático por inactividad.
@@ -70,10 +69,8 @@ En Mac no están la auto-escritura (Ctrl + Alt + A), Windows Hello ni la extensi
 - `Gestor_contrasenas_secure.py`: la aplicación (interfaz, criptografía, licencias).
 - `cv_extras.py`: importar/exportar CSV, códigos 2FA, kit de emergencia en PDF, auto-escritura y Windows Hello.
 - `cv_sync.py`: sincronización por carpeta (`.cvsync`) y bóveda de equipo (`.cvteam`, claves X25519).
-- `cv_bridge.py` y `ciphervault_bridge.py`: puente local con la extensión del navegador (`CipherVaultBridge.exe`).
-- `extension/`: la extensión (Manifest V3). `extension/TIENDA.md` explica cómo publicarla y `extension/PRIVACIDAD.md` es su política de privacidad.
 - `installer/CipherVault.iss`: instalador de Windows (Inno Setup 6 o 7), lo compila `build.ps1`.
-- `.github/workflows/release.yml` (con `CipherVault-mac.spec`): al subir una etiqueta `v*` desde PyCharm (o al publicar un release en GitHub), GitHub Actions compila el instalador de Windows, la extensión y la app de macOS (`CipherVault-macOS.zip`). Necesita los secretos `CIPHERVAULT_ACTIVATION_URL` y `CIPHERVAULT_ACTIVATION_SECRET` en *Settings → Secrets and variables → Actions*.
+- `.github/workflows/release.yml` (con `CipherVault-mac.spec`): al subir una etiqueta `v*` desde PyCharm (o al publicar un release en GitHub), GitHub Actions compila el instalador de Windows y la app de macOS (`CipherVault-macOS.zip`). Necesita los secretos `CIPHERVAULT_ACTIVATION_URL` y `CIPHERVAULT_ACTIVATION_SECRET` en *Settings → Secrets and variables → Actions*.
 - `Main.py`: punto de entrada; registra los errores de arranque en el log.
 - `build.ps1`: crea el entorno, genera `desktop_runtime_config.json` (sin nada de developer) y compila `dist\CipherVault.exe`.
 - `CipherVault.spec`: especificación de PyInstaller (se niega a compilar si el JSON trae claves de developer).
@@ -128,7 +125,7 @@ No distribuyas: `.env`, `developer.license`, `dev_credentials.json`, `desktop_ru
 2. Crea la etiqueta en PyCharm (*Git > New Tag*): `v3.2.0` para una versión definitiva, o `v3.2.0-beta` (con guion) para una pre-release.
 3. Súbela: *Git > Push*, con la casilla **Push tags** marcada.
 
-GitHub Actions crea el release y le sube el instalador de Windows, la versión portable, la extensión y la app de macOS. Si la etiqueta no coincide con `APP_VERSION`, se detiene sin compilar. También sigue funcionando publicar un release desde la web de GitHub.
+GitHub Actions crea el release y le sube el instalador de Windows, la versión portable y la app de macOS. Si la etiqueta no coincide con `APP_VERSION`, se detiene sin compilar. También sigue funcionando publicar un release desde la web de GitHub.
 
 ## Seguridad (resumen)
 
@@ -147,15 +144,14 @@ Flujo de compra: la app abre el Payment Link de Wompi → Make genera un **códi
 | Plan | Contraseñas | Análisis, categorías y 2FA | Exportar | Respaldo automático | Precio |
 |---|---|---|---|---|---|
 | `free` | 50 | no | no | no | gratis |
-| `trial` (30 días) | 50 | sí | no | no | gratis |
 | `premium` | ilimitadas | sí | sí | sí | 9.900 COP/mes · 89.900 COP/año · 149.900 COP de por vida |
-| `equipo` | ilimitadas | sí, + bóveda de equipo | sí | sí | por mes: 3 usuarios 39.900 · 5 usuarios 59.900 · 10 usuarios 99.900 · ilimitados 199.900 |
+| `equipo` | ilimitadas | sí, + bóveda compartida, registro de actividad e informe de seguridad del equipo | sí | sí | por mes: 3 personas 24.900 (8.300 c/u) · 5 personas 37.900 (7.580 c/u) · 10 personas 64.900 (6.490 c/u) · ilimitadas 199.900 |
 
-Los paquetes de Equipo se pagan una sola vez por la empresa. Make envía al correo del pago 3, 5 o 10 códigos (uno por persona) o, en el ilimitado, un código de empresa con uso justo de hasta 100 equipos. Estos códigos **no** están atados al correo: cada empleado los activa en su propia cuenta. La app primero prueba el código con el correo de la cuenta y, si no existe, como código de equipo.
+Los paquetes de Equipo los paga la empresa en un solo pago mensual, y cada persona sale más barata que un Premium individual (9.900). Make envía al correo del pago 3, 5 o 10 códigos (uno por persona) o, en el ilimitado, un código de empresa con uso justo de hasta 100 equipos. Estos códigos **no** están atados al correo: cada empleado los activa en su propia cuenta. La app primero prueba el código con el correo de la cuenta y, si no existe, como código de equipo.
 
 Las tres opciones de Premium activan el mismo plan; solo cambia la duración que Make guarda con el código (1, 12 o 1200 meses). El plan `basic` ya no se vende, pero los códigos emitidos antes siguen funcionando (ahora con contraseñas ilimitadas). Importar CSV y la auto-escritura están disponibles en todos los planes.
 
-La prueba gratuita guarda su fecha de inicio en tres sitios (archivo, base de datos y registro de Windows) y detecta retrocesos del reloj. El plan guardado en la base local lleva un sello de integridad ligado al equipo: editarlo a mano o copiarlo a otro PC lo invalida. Es una protección contra manipulación casual, no contra ingeniería inversa del `.exe`.
+Ya no hay período de prueba: se empieza en el plan gratis (50 contraseñas, sin análisis, categorías ni 2FA). El plan guardado en la base local lleva un sello de integridad ligado al equipo: editarlo a mano o copiarlo a otro PC lo invalida. Es una protección contra manipulación casual, no contra ingeniería inversa del `.exe`.
 
 ## Datos locales
 

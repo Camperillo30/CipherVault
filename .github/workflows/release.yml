@@ -4,7 +4,6 @@
 # al PUBLICAR un release desde la web de GitHub (también si es pre-release) o a mano, y sube:
 #   - CipherVault-Setup.exe        instalador de Windows (build.ps1 + Inno Setup)
 #   - CipherVault-portable.exe     la app sin instalador
-#   - CipherVault-extension.zip    la extensión del navegador
 #   - CipherVault-macOS.zip        la app de macOS (CipherVault.app)
 # Con etiqueta: tiene que coincidir con APP_VERSION de Gestor_contrasenas_secure.py. "v3.2.0" crea
 # una versión definitiva; "v3.2.0-beta" (con guion), una pre-release.
@@ -13,7 +12,6 @@
 # Secretos necesarios (Settings → Secrets and variables → Actions → New repository secret):
 #   CIPHERVAULT_ACTIVATION_URL      (el mismo valor del .env)
 #   CIPHERVAULT_ACTIVATION_SECRET   (el mismo valor del .env)
-# Opcional: CIPHERVAULT_EXTENSION_IDS
 name: Release
 
 on:
@@ -71,7 +69,6 @@ jobs:
             echo "| **Windows 10 u 11** (instalador) | \`CipherVault-Setup.exe\` |"
             echo "| Windows sin instalar | \`CipherVault-portable.exe\` |"
             echo "| **Mac** (macOS 11 o superior, chip Apple M1 o más nuevo) | \`CipherVault-macOS.zip\` |"
-            echo "| Extensión del navegador | \`CipherVault-extension.zip\` |"
             echo
             echo "Los archivos aparecen aquí unos minutos después de publicar, cuando GitHub termina de compilarlos."
             echo
@@ -109,7 +106,6 @@ jobs:
         env:
           CIPHERVAULT_ACTIVATION_URL: ${{ secrets.CIPHERVAULT_ACTIVATION_URL }}
           CIPHERVAULT_ACTIVATION_SECRET: ${{ secrets.CIPHERVAULT_ACTIVATION_SECRET }}
-          CIPHERVAULT_EXTENSION_IDS: ${{ secrets.CIPHERVAULT_EXTENSION_IDS }}
         run: .\build.ps1
       - name: Subir al release
         shell: pwsh
@@ -121,7 +117,6 @@ jobs:
           Copy-Item $setup.FullName dist\CipherVault-Setup.exe
           Copy-Item dist\CipherVault.exe dist\CipherVault-portable.exe
           $files = @("dist\CipherVault-Setup.exe", "dist\CipherVault-portable.exe")
-          if (Test-Path dist\CipherVault-extension.zip) { $files += "dist\CipherVault-extension.zip" }
           gh release upload $env:TAG @files --clobber --repo $env:GITHUB_REPOSITORY
 
   macos:
@@ -143,7 +138,6 @@ jobs:
         env:
           CIPHERVAULT_ACTIVATION_URL: ${{ secrets.CIPHERVAULT_ACTIVATION_URL }}
           CIPHERVAULT_ACTIVATION_SECRET: ${{ secrets.CIPHERVAULT_ACTIVATION_SECRET }}
-          CIPHERVAULT_EXTENSION_IDS: ${{ secrets.CIPHERVAULT_EXTENSION_IDS }}
         run: |
           if [ -z "$CIPHERVAULT_ACTIVATION_URL" ] || [ -z "$CIPHERVAULT_ACTIVATION_SECRET" ]; then
             echo "::error::Faltan los secretos CIPHERVAULT_ACTIVATION_URL / CIPHERVAULT_ACTIVATION_SECRET."
@@ -151,7 +145,7 @@ jobs:
           fi
           python - <<'PY'
           import json, os
-          keys = ["CIPHERVAULT_ACTIVATION_URL", "CIPHERVAULT_ACTIVATION_SECRET", "CIPHERVAULT_EXTENSION_IDS"]
+          keys = ["CIPHERVAULT_ACTIVATION_URL", "CIPHERVAULT_ACTIVATION_SECRET"]
           with open("desktop_runtime_config.json", "w", encoding="utf-8") as f:
               json.dump({k: os.environ.get(k, "") for k in keys}, f, indent=2)
           PY

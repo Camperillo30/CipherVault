@@ -48,7 +48,6 @@ a = Analysis(
         'winreg',
         'cv_extras',
         'cv_sync',
-        'cv_bridge',
         # Windows Hello (paquetes winrt; si no están instalados PyInstaller los ignora)
         'winrt.system',
         'winrt.runtime',
@@ -83,46 +82,6 @@ exe = EXE(
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon=[os.path.join(ASSETS, 'icono.ico')],
-)
-
-# ── Puente de la extensión del navegador ─────────────────────────
-# CipherVaultBridge.exe: programa pequeño (solo biblioteca estándar) que Chrome/Edge/Brave
-# ejecutan para hablar con CipherVault.exe. Es de consola porque el navegador se comunica
-# con él por stdin/stdout (el navegador lo abre oculto).
-bridge_a = Analysis(
-    ['ciphervault_bridge.py'],
-    pathex=[],
-    binaries=[],
-    datas=[],
-    hiddenimports=[],
-    hookspath=[],
-    hooksconfig={},
-    runtime_hooks=[],
-    excludes=['tkinter', 'cryptography', 'sqlite3', 'winrt', 'cv_extras', 'cv_sync'],
-    noarchive=False,
-    optimize=0,
-)
-bridge_pyz = PYZ(bridge_a.pure)
-bridge_exe = EXE(
-    bridge_pyz,
-    bridge_a.scripts,
-    bridge_a.binaries,
-    bridge_a.datas,
-    [],
-    name='CipherVaultBridge',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

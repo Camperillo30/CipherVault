@@ -42,6 +42,8 @@ TOMBSTONE_DAYS = 400                     # las lápidas más viejas se descartan
 ENTRY_FIELDS = ("uid", "service", "username", "password", "notes", "url", "totp", "category",
                 "created_at", "updated_at")
 ROLES = {"admin": "Administrador", "editor": "Editor", "lector": "Solo lectura"}
+ACTIVITY_MAX = 1000                      # eventos que guarda el registro de actividad del equipo
+STALE_DAYS = 180                         # informe de seguridad: contraseñas sin cambiar en ~6 meses
 
 
 class SyncError(Exception):
@@ -285,6 +287,44 @@ def unseal(sealed: str, member_priv: bytes) -> bytes:
         raise SyncError("No se pudo abrir la clave del equipo.") from exc
 
 
+def merge_activity(a: list[dict], b: list[dict]) -> list[dict]:
+    """Une dos registros de actividad (sin repetir eventos), en orden y con tope ACTIVITY_MAX."""
+    seen = {}
+    for event in list(a or []) + list(b or []):
+        if isinstance(event, dict) and event.get("id"):
+            seen.setdefault(event["id"], event)
+    return sorted(seen.values(), key=lambda e: (e.get("at", ""), e["id"]))[-ACTIVITY_MAX:]
+
+
+def security_report(entries: list[dict], strength_of, now: datetime | None = None) -> dict:
+    """Informe de seguridad de la bóveda del equipo.
+    strength_of(password) -> "Débil" | "Media" | "Fuerte" | ... (la misma escala de la app).
+    Devuelve listas de servicios: débiles, repetidas (misma contraseña en varias entradas),
+    sin cambiar en STALE_DAYS días y sin 2FA, más un puntaje de 0 a 100."""
+    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    weak, stale, no_2fa, by_password = [], [], [], {}
+    for e in entries:
+        name = e.get("service", "") or "—"
+        pwd = e.get("password", "")
+        if str(strength_of(pwd)).lower().startswith(("débil", "debil", "muy débil", "muy debil")):
+            weak.append(name)
+        by_password.setdefault(pwd, []).append(name)
+        try:
+            changed = datetime.strptime((e.get("updated_at") or "")[:19], "%Y-%m-%d %H:%M:%S")
+            if now - changed > timedelta(days=STALE_DAYS):
+                stale.append(name)
+        except ValueError:
+            pass
+        if not e.get("totp"):
+            no_2fa.append(name)
+    reused = sorted(n for names in by_password.values() if len(names) > 1 for n in names)
+    total = len(entries)
+    problems = len(set(weak) | set(reused) | set(stale))
+    score = 100 if not total else round(100 * (total - problems) / total)
+    return {"total": total, "weak": sorted(weak), "reused": reused, "stale": sorted(stale),
+            "no_2fa": sorted(no_2fa), "score": score}
+
+
 class TeamVault:
     """Archivo .cvteam abierto con la clave privada de un miembro."""
 
@@ -313,6 +353,24 @@ class TeamVault:
     @property
     def tombstones(self) -> dict:
         return self.payload.setdefault("tombstones", {})
+
+    @property
+    def activity(self) -> list[dict]:
+        """Registro de actividad: quién creó, editó, borró o copió cada entrada y los cambios de
+        miembros. Va cifrado dentro del archivo, como todo lo demás."""
+        return self.payload.setdefault("activity", [])
+
+    @property
+    def my_name(self) -> str:
+        return self.members.get(self.my_fp, {}).get("name", "Miembro")
+
+    def _log(self, action: str, target: str = ""):
+        self.activity.append({"id": new_uid(), "at": utc_now(), "by": self.my_fp, "by_name": self.my_name,
+                              "action": action, "target": target})
+
+    def log_copy(self, entry: dict, what: str = "la contraseña"):
+        """Anota que este miembro copió un dato de una entrada (se guarda con save_merged)."""
+        self._log(f"copió {what} de", entry.get("service", ""))
 
     @property
     def my_role(self) -> str:
@@ -380,6 +438,7 @@ class TeamVault:
             entries, tombs = merge(self.entries, self.tombstones, payload.get("entries", []),
                                    payload.get("tombstones", {}))
             self.payload["entries"], self.payload["tombstones"] = entries, tombs
+            self.payload["activity"] = merge_activity(self.activity, payload.get("activity", []))
             merged_any = True
             try:
                 copy.unlink()
@@ -407,6 +466,7 @@ class TeamVault:
             self.payload["members"] = members
             entries, tombs = merge(self.entries, self.tombstones, disk.entries, disk.tombstones)
             self.payload["entries"], self.payload["tombstones"] = entries, tombs
+            self.payload["activity"] = merge_activity(self.activity, disk.activity)
         if self.my_fp not in self.members:
             raise SyncError("Ya no eres miembro de este equipo.")
         self._save_raw()
@@ -419,14 +479,18 @@ class TeamVault:
         entry["uid"] = entry["uid"] or new_uid()
         entry["created_at"] = entry["created_at"] or utc_now()
         entry["updated_at"] = utc_now()
+        is_new = not any(e.get("uid") == entry["uid"] for e in self.entries)
         self.payload["entries"] = [e for e in self.entries if e.get("uid") != entry["uid"]] + [entry]
+        self._log("creó" if is_new else "editó", entry["service"])
         return entry
 
     def delete(self, uid: str):
         if not self.can_edit:
             raise SyncError("Tu rol en el equipo es de solo lectura.")
+        gone = next((e for e in self.entries if e.get("uid") == uid), {})
         self.payload["entries"] = [e for e in self.entries if e.get("uid") != uid]
         self.tombstones[uid] = utc_now()
+        self._log("eliminó", gone.get("service", ""))
 
     # ── miembros (solo administrador) ──
     def add_member(self, code: str, name: str, email: str, role: str) -> str:
@@ -440,6 +504,7 @@ class TeamVault:
             raise SyncError("Esa persona ya es miembro del equipo.")
         self.members[fp] = {"name": name.strip() or "Miembro", "email": email.strip().lower(),
                             "role": role, "pubkey": _b64(pub), "added_at": utc_now()}
+        self._log("agregó a", f"{self.members[fp]['name']} ({ROLES[role]})")
         return fp
 
     def set_role(self, fp: str, role: str):
@@ -450,6 +515,7 @@ class TeamVault:
         if fp == self.my_fp and role != "admin" and sum(m["role"] == "admin" for m in self.members.values()) == 1:
             raise SyncError("El equipo necesita al menos un administrador.")
         self.members[fp]["role"] = role
+        self._log("cambió el rol de", f"{self.members[fp]['name']} a {ROLES[role]}")
 
     def remove_member(self, fp: str):
         """Quita a alguien y ROTA la clave del equipo: el archivo nuevo ya no se abre con la
@@ -461,6 +527,7 @@ class TeamVault:
             raise SyncError("No puedes quitarte a ti mismo. Nombra otro administrador primero.")
         if fp not in self.members:
             raise SyncError("Ese miembro no existe.")
+        self._log("quitó a", self.members[fp].get("name", ""))
         del self.members[fp]
         self.team_key = Fernet.generate_key()
         self.key_version += 1

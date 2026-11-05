@@ -36,7 +36,6 @@ import logging
 import logging.handlers
 import os
 import platform
-import queue
 import re
 import secrets
 import sqlite3
@@ -57,7 +56,6 @@ from tkinter import ttk, messagebox, simpledialog, filedialog
 
 from cryptography.fernet import Fernet, InvalidToken
 
-import cv_bridge
 import cv_extras as cvx
 import cv_sync as cvs
 
@@ -281,6 +279,7 @@ WOMPI_LINK_MAP = {**DEFAULT_WOMPI_LINKS,
 _PREMIUM_FEATURES = [
     "Contraseñas ilimitadas",
     "Análisis de seguridad y filtraciones",
+    "Categorías para organizar tus claves",
     "Exportar e importar (.cvault y CSV)",
     "Copia de seguridad automática",
     "Códigos 2FA (TOTP)",
@@ -326,35 +325,44 @@ PLANES = {
     },
 }
 
-# Plan para empresas: bóveda de equipo compartida. Se cobra por usuario: cada empleado
-# activa su propio código (la empresa paga el link con el email de cada empleado).
+_TEAM_FEATURES = [
+    "Premium completo para cada persona",
+    "Bóveda compartida con roles (admin, editor, lector)",
+    "Registro de actividad: quién creó, editó o copió cada clave",
+    "Informe de seguridad del equipo",
+]
+
+
 def _team_plan(key: str, users: int | None, default_price: int) -> dict:
     """Paquete del plan Equipo. users=None → usuarios ilimitados (un código de empresa)."""
     label = f"{users} usuarios" if users else "Usuarios ilimitados"
     price = _env_int(f"CIPHERVAULT_PRICE_{key.upper()}_COP", default_price)
+    premium = PLANES["premium_mensual"]["precio_cop"]
+    saving = round(100 * (1 - price / (premium * users))) if users and premium else 0
     return {
         "nombre":      f"Equipo · {label}",
         "plan":        "equipo",
         "usuarios":    users,
         "precio_cop":  price,
         "periodo":     "/mes",
+        "ahorro_pct":  saving,
         "descripcion": (f"{users} códigos de activación, uno por persona." if users else
                         "Un código de empresa para todo tu equipo (uso justo: hasta 100 equipos)."),
         "color":       "#74b9ff",
         "meses":       1,
         "badge":       "EMPRESAS",
-        "features":    ["Todo lo de Premium", "Bóveda de equipo compartida",
-                        "Roles: administrador, editor, solo lectura"],
+        "features":    _TEAM_FEATURES,
     }
 
 
-# Plan para empresas: bóveda de equipo compartida. Un solo pago de la empresa y le llegan
-# por correo los códigos (o un código de empresa, en el paquete ilimitado) para repartir:
-# estos códigos NO están atados al correo de quien paga.
+# Plan para empresas. Un solo pago mensual de la empresa y le llegan por correo los códigos
+# (o un código de empresa, en el paquete ilimitado) para repartir: estos códigos NO están
+# atados al correo de quien paga. Cada persona sale más barata que un Premium individual
+# (9.900/mes) y el plan suma funciones de administración que Premium no tiene.
 TEAM_PLANES = {
-    "equipo_3":         _team_plan("equipo_3", 3, 39900),
-    "equipo_5":         _team_plan("equipo_5", 5, 59900),
-    "equipo_10":        _team_plan("equipo_10", 10, 99900),
+    "equipo_3":         _team_plan("equipo_3", 3, 24900),      # 8.300 por persona (-16 %)
+    "equipo_5":         _team_plan("equipo_5", 5, 37900),      # 7.580 por persona (-23 %)
+    "equipo_10":        _team_plan("equipo_10", 10, 64900),    # 6.490 por persona (-34 %)
     "equipo_ilimitado": _team_plan("equipo_ilimitado", None, 199900),
 }
 ALL_PLANES = {**PLANES, **TEAM_PLANES}
@@ -372,8 +380,6 @@ REDEEMABLE_PLANS = frozenset({"basic", "premium", "equipo", "developer"})
 #  deshabilitada (no hay valor por defecto).
 # ──────────────────────────────────────────────
 ACTIVATION_URL = _env_str("CIPHERVAULT_ACTIVATION_URL", "")
-# IDs de la extensión publicada (Chrome Web Store / Edge Add-ons), separados por comas.
-EXTENSION_IDS = _env_list("CIPHERVAULT_EXTENSION_IDS")
 ACTIVATION_SECRET = _env_str("CIPHERVAULT_ACTIVATION_SECRET", "")
 ACTIVATION_TIMEOUT = 12   # segundos
 # Equipos (PC) en los que se puede activar un mismo código. El límite real lo aplica el
@@ -389,10 +395,15 @@ BASE_PATH = os.path.dirname(os.path.abspath(__file__))
 def _get_data_path() -> Path:
     """Ubicación escribible por usuario, separada del ejecutable instalado:
     %LOCALAPPDATA%\\CipherVault en Windows, ~/Library/Application Support/CipherVault en macOS."""
-    root = cv_bridge.data_dir()
+    if os.environ.get("LOCALAPPDATA"):
+        root = Path(os.environ["LOCALAPPDATA"]) / "CipherVault"
+    elif sys.platform == "darwin":
+        root = Path.home() / "Library" / "Application Support" / "CipherVault"
+    else:
+        root = Path.home() / "CipherVault"
     root.mkdir(parents=True, exist_ok=True)
     # Conserva datos existentes de instalaciones antiguas sin sobrescribirlos.
-    for filename in ("passwords.db", "app_config.json", "install_date.txt"):
+    for filename in ("passwords.db", "app_config.json"):
         old, new = Path(BASE_PATH) / filename, root / filename
         if old.exists() and not new.exists():
             try:
@@ -405,7 +416,6 @@ def _get_data_path() -> Path:
 DATA_PATH = _get_data_path()
 DB_FILE = str(DATA_PATH / "passwords.db")
 CONFIG_FILE = str(DATA_PATH / "app_config.json")
-INSTALL_FILE = str(DATA_PATH / "install_date.txt")
 LICENSE_FILE = str(DATA_PATH / "developer.license")
 LOG_FILE = str(DATA_PATH / "ciphervault.log")
 # Credenciales de developer configuradas desde la propia app (Dev Panel).
@@ -600,7 +610,7 @@ def dec_text(vault: Fernet, value) -> str:
 
 # ── Sello de la licencia guardada en la base de datos local ───────
 # Evita el "editar una celda": cambiar plan/vencimiento con un editor de SQLite
-# invalida el sello y la cuenta vuelve a gratis/prueba. Es tamper-evidence, no
+# invalida el sello y la cuenta vuelve a gratis. Es tamper-evidence, no
 # secreto: quien desensamble el .exe podría reproducirlo. La protección real
 # es que el plan solo se otorga canjeando un código de un solo uso, atado al equipo.
 _SEAL_KEY = b"CipherVault/license-seal/v1/S.C.A/2026"
@@ -1060,128 +1070,12 @@ class PwnedPasswords:
         return 0
 
 
-# ══════════════════════════════════════════════
-#  LICENCIA DE PRUEBA (30 días)
-# ══════════════════════════════════════════════
-class TrialLicenseManager:
-    """
-    Período de prueba de 30 días desde la primera ejecución en el equipo.
-
-    La fecha de instalación se guarda en tres sitios (archivo, base de datos y,
-    en Windows, el registro de HKCU) y manda la MÁS ANTIGUA, así que borrar uno
-    solo no reinicia la prueba. Además se recuerda la última fecha vista: si el
-    reloj se atrasa, se usa esa para que no se pueda "volver al pasado".
-    """
-    TRIAL_DAYS = 30
-    REG_PATH = r"Software\CipherVault"
-
-    # ── almacenes ──
-    @staticmethod
-    def _read_file() -> datetime | None:
-        try:
-            with open(INSTALL_FILE, "r", encoding="utf-8") as f:
-                return datetime.strptime(f.read().strip(), SQL_DATETIME)
-        except (OSError, ValueError):
-            return None
-
-    @staticmethod
-    def _write_file(value: str):
-        try:
-            with open(INSTALL_FILE, "w", encoding="utf-8") as f:
-                f.write(value)
-        except OSError as exc:
-            log.warning("No se pudo escribir install_date: %s", exc)
-
-    @staticmethod
-    def _read_meta(key: str) -> datetime | None:
-        try:
-            with db() as conn:
-                row = conn.execute("SELECT value FROM app_meta WHERE key=?", (key,)).fetchone()
-            return datetime.strptime(row[0], SQL_DATETIME) if row else None
-        except (sqlite3.Error, ValueError):
-            return None
-
-    @staticmethod
-    def _write_meta(key: str, value: str):
-        try:
-            with db() as conn:
-                conn.execute("INSERT INTO app_meta(key, value) VALUES(?, ?) "
-                             "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
-        except sqlite3.Error as exc:
-            log.warning("No se pudo escribir app_meta[%s]: %s", key, exc)
-
-    @staticmethod
-    def _read_registry(name: str) -> datetime | None:
-        if os.name != "nt":
-            return None
-        try:
-            import winreg
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, TrialLicenseManager.REG_PATH) as key:
-                return datetime.strptime(winreg.QueryValueEx(key, name)[0], SQL_DATETIME)
-        except (OSError, ValueError, ImportError):
-            return None
-
-    @staticmethod
-    def _write_registry(name: str, value: str):
-        if os.name != "nt":
-            return
-        try:
-            import winreg
-            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, TrialLicenseManager.REG_PATH) as key:
-                winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
-        except (OSError, ImportError):
-            pass
-
-    # ── API pública ──
-    @staticmethod
-    def get_installation_date() -> str:
-        """Fecha de instalación (la más antigua de los tres almacenes). Si es la primera
-        ejecución la crea; si falta en algún almacén, lo vuelve a escribir."""
-        found = [d for d in (TrialLicenseManager._read_file(),
-                             TrialLicenseManager._read_meta("install_date"),
-                             TrialLicenseManager._read_registry("InstallDate")) if d]
-        first = min(found) if found else datetime.now()
-        text = first.strftime(SQL_DATETIME)
-        TrialLicenseManager._write_file(text)
-        TrialLicenseManager._write_meta("install_date", text)
-        TrialLicenseManager._write_registry("InstallDate", text)
-        return text
-
-    @staticmethod
-    def _now() -> datetime:
-        """Ahora, pero nunca anterior a la última fecha vista (anti-retroceso del reloj)."""
-        now = datetime.now()
-        seen = [d for d in (TrialLicenseManager._read_meta("last_seen"),
-                            TrialLicenseManager._read_registry("LastSeen")) if d]
-        last = max(seen) if seen else None
-        if last and last > now:
-            return last
-        text = now.strftime(SQL_DATETIME)
-        TrialLicenseManager._write_meta("last_seen", text)
-        TrialLicenseManager._write_registry("LastSeen", text)
-        return now
-
-    @staticmethod
-    def get_days_remaining() -> tuple[int, int]:
-        """Días de prueba que quedan y días ya transcurridos desde la instalación."""
-        install_dt = datetime.strptime(TrialLicenseManager.get_installation_date(), SQL_DATETIME)
-        days_passed = max(0, (TrialLicenseManager._now() - install_dt).days)
-        return max(0, TrialLicenseManager.TRIAL_DAYS - days_passed), days_passed
-
-    @staticmethod
-    def is_trial_valid() -> tuple[bool, int, int]:
-        """Indica si el período de prueba sigue vigente, junto con los días restantes y transcurridos."""
-        remaining, passed = TrialLicenseManager.get_days_remaining()
-        return remaining > 0, remaining, passed
-
-
 def compute_effective_version(user: dict) -> tuple[str, str | None, str]:
     """
     Plan que realmente corresponde a una cuenta AHORA. Devuelve (plan, vencimiento, estado).
     La base de datos es editable por el usuario, así que no se fía de ella:
       · developer: solo en una máquina de desarrollo autorizada (nunca en el .exe)
       · basic/premium/developer(código firmado): requiere sello válido (lo pone el canje de un código) y vencimiento futuro
-      · trial: solo mientras el período de prueba siga vigente
     Estado: "ok" | "expired" | "tampered" (plan sin sello válido, es decir, editado a mano).
     """
     plan = str(user.get("version") or "free").strip().lower()
@@ -1201,8 +1095,7 @@ def compute_effective_version(user: dict) -> tuple[str, str | None, str]:
             return "free", expiry_str, "expired"
         return plan, expiry_str, "ok"
 
-    if plan == "trial":
-        return ("trial" if TrialLicenseManager.is_trial_valid()[0] else "free"), None, "ok"
+    # Cualquier otro valor (incluida la antigua prueba de 30 días) es el plan gratis.
     return "free", None, "ok"
 
 
@@ -1279,7 +1172,7 @@ class DeveloperLicenseManager:
 #  VERSIONES Y LÍMITES
 # ══════════════════════════════════════════════
 # El plan gratis guarda hasta 50 contraseñas (antes 3): suficiente para probar de verdad.
-# La prueba de 30 días tiene el mismo límite, con las funciones de Premium.
+# El plan gratis no incluye análisis de seguridad, categorías ni códigos 2FA (son de Premium).
 FREE_MAX_PASSWORDS = 50
 
 VERSIONS = {
@@ -1290,13 +1183,6 @@ VERSIONS = {
         "categories": False, "export": False, "backup": False, "totp": False,
         "sync": False, "team": False,
         "notes_max_length": 100, "price": 0, "color": "#b2bec3",
-    },
-    "trial": {
-        "name": "Prueba", "max_passwords": FREE_MAX_PASSWORDS,
-        "security_analysis": True, "password_length_max": 32,
-        "categories": True, "export": False, "backup": False, "totp": True,
-        "sync": False, "team": False,
-        "notes_max_length": 250, "price": 0, "color": "#fdcb6e",
     },
     "basic": {
         "name": "Básico", "max_passwords": -1,
@@ -1338,7 +1224,7 @@ def get_features(version: str) -> dict:
 #  MARCA / COPYRIGHT
 # ══════════════════════════════════════════════
 APP_NAME = "CipherVault"
-APP_VERSION = "3.1.0"   # build.ps1 la usa para nombrar el instalador
+APP_VERSION = "3.2.0"   # build.ps1 la usa para nombrar el instalador
 SUPPORT_EMAIL = "ciphervaultpass@gmail.com"
 APP_AUTHOR = "S.C.A"
 APP_COPYRIGHT_YEAR = "2026"
@@ -1402,7 +1288,7 @@ class CipherVaultApp:
         self.root.report_callback_exception = self._report_callback_exception
         self._configure_responsive_ui()
 
-        # La base de datos se prepara primero: la prueba gratuita guarda ahí su fecha.
+        # La base de datos se prepara primero.
         self._ensure_db()
         self.is_developer = DeveloperLicenseManager.is_developer_machine()
         self.user_version = self._initial_version()
@@ -1423,7 +1309,6 @@ class CipherVaultApp:
         self._start_autotype()
         self._sync_status = ""
         self.root.after(self.SYNC_INTERVAL_MS, self._sync_loop)
-        self._start_bridge()
         self.show_login()
 
     # ── errores y bloqueo por inactividad ─────
@@ -1533,11 +1418,8 @@ class CipherVaultApp:
                 pass
 
     def _initial_version(self) -> str:
-        """Determina la versión inicial antes de iniciar sesión: 'developer' en máquinas autorizadas, 'trial' si el período de prueba sigue vigente, o 'free' en otro caso."""
-        if self.is_developer:
-            return "developer"
-        valid, _remaining, _passed = TrialLicenseManager.is_trial_valid()
-        return "trial" if valid else "free"
+        """Determina la versión inicial antes de iniciar sesión: 'developer' en máquinas autorizadas o 'free'."""
+        return "developer" if self.is_developer else "free"
 
     def _ensure_dev_license(self):
         """Crea el archivo de licencia de desarrollador la primera vez que se detecta una máquina autorizada."""
@@ -1600,7 +1482,7 @@ class CipherVaultApp:
         """
         Crea las tablas de la base de datos SQLite si no existen y aplica las migraciones
         de columnas e índices. Tablas: users, passwords, license_activations,
-        login_attempts (bloqueo por intentos, persistente) y app_meta (fechas de la prueba).
+        login_attempts (bloqueo por intentos, persistente) y app_meta.
         """
         with db() as conn:
             try:
@@ -2133,9 +2015,6 @@ class CipherVaultApp:
         # badge de estado (solo si aplica)
         if self.is_developer:
             self._badge(logo_frame, "MODO DESARROLLADOR", C["primary"])
-        elif self.user_version == "trial":
-            _, rem, _ = TrialLicenseManager.is_trial_valid()
-            self._badge(logo_frame, f"PRUEBA GRATIS - {rem} días restantes", C["warning"])
 
         # formulario
         form = self._card(col, padx=32, pady=28)
@@ -2210,7 +2089,7 @@ class CipherVaultApp:
             self._vis_btn.config(text="\U0001F441")
 
     def _badge(self, parent, text, color):
-        """Muestra una pequeña insignia de color con texto (p. ej. 'MODO DESARROLLADOR' o los días de prueba restantes)."""
+        """Muestra una pequeña insignia de color con texto (p. ej. "MODO DESARROLLADOR")."""
         f = tk.Frame(parent, bg=color, padx=10, pady=4)
         f.pack(pady=4)
         tk.Label(f, text=text, font=("Segoe UI", 9, "bold"), bg=color, fg="#000000").pack()
@@ -2223,7 +2102,7 @@ class CipherVaultApp:
         """
         Valida usuario y contraseña maestra. Tras 5 fallos seguidos bloquea ese usuario un
         tiempo creciente (persistente). Con la clave correcta abre la bóveda, migra datos
-        antiguos y calcula el plan REAL (sello de licencia, vencimiento y prueba).
+        antiguos y calcula el plan REAL (sello de licencia y vencimiento).
         """
         uname = self.entry_user.get().strip()
         pwd   = self.entry_pass.get()
@@ -2367,8 +2246,7 @@ class CipherVaultApp:
         vault_salt = _b64(os.urandom(16))
         key = _derive_vault_key(pwd, vault_salt)
         is_dev = uname.lower() in ["admin", "developer", "owner", "dev"] and self.is_developer
-        # La prueba se guarda como 'trial', pero se vuelve a comprobar en cada login.
-        version = "developer" if is_dev else ("trial" if TrialLicenseManager.is_trial_valid()[0] else "free")
+        version = "developer" if is_dev else "free"
         try:
             with db() as conn:
                 conn.execute(
@@ -2546,7 +2424,6 @@ class CipherVaultApp:
         ver  = get_features(self.user_version)
         badge_txt = {
             "developer": "⚡ DESARROLLADOR",
-            "trial":     f"🎯 PRUEBA · {TrialLicenseManager.get_days_remaining()[0]}d",
             "premium":   "⭐ PREMIUM",
             "equipo":    "👥 EQUIPO",
             "basic":     "⭐ BÁSICO",
@@ -2562,7 +2439,7 @@ class CipherVaultApp:
             ("🔑  Generar contraseña",  self._tab_generator, "nav_generator"),
             ("📋  Mis contraseñas",     self._tab_list, "nav_passwords"),
         ]
-        if self.user_version != "free":
+        if get_features(self.user_version)["security_analysis"]:
             nav.append(("🛡️  Análisis de seguridad", self._tab_security, None))
         if get_features(self.user_version)["export"]:
             nav.append(("📦  Exportar bóveda", self._export_vault, None))
@@ -2613,7 +2490,7 @@ class CipherVaultApp:
     #  TAB: DASHBOARD
     # ─────────────────────────────────────────
     def _tab_dashboard(self):
-        """Pestaña de inicio: resumen de contraseñas guardadas, límite del plan, contraseñas fuertes y puntuación de seguridad, además de accesos rápidos y el aviso de plan gratuito/prueba."""
+        """Pestaña de inicio: resumen de contraseñas guardadas, límite del plan, contraseñas fuertes y puntuación de seguridad, además de accesos rápidos y el aviso de plan gratuito."""
         self._clear_content()
         f = self.content_frame
 
@@ -2655,7 +2532,9 @@ class CipherVaultApp:
         for txt, cmd in [
             ("✨ Generar contraseña", self._tab_generator),
             ("📝 Agregar manualmente", self._show_add_form),
-            ("🛡️ Análisis de seguridad", self._tab_security),
+            ("🛡️ Análisis de seguridad", self._tab_security)
+            if get_features(self.user_version)["security_analysis"]
+            else ("🔒 Análisis de seguridad (Premium)", self._show_plans_screen),
         ]:
             card = self._card(row, padx=16, pady=14)
             card.pack(side="left", expand=True, fill="x", padx=5)
@@ -2665,13 +2544,7 @@ class CipherVaultApp:
                 w.bind("<Button-1>", lambda _, c=cmd: c())
 
         # banner de plan
-        if self.user_version == "trial":
-            _, rem, _ = TrialLicenseManager.is_trial_valid()
-            self._plan_banner(f, C["warning"],
-                f"🎯 Período de prueba · {rem} días restantes",
-                "Adquiere un plan para no perder acceso.",
-                self._show_plans_screen, "💳 Ver planes")
-        elif self.user_version == "free":
+        if self.user_version == "free":
             self._plan_banner(f, C["card"],
                 "🆓 Versión gratuita",
                 f"Usando {total}/{lim} contraseñas. Con Premium tienes contraseñas ilimitadas, "
@@ -2841,6 +2714,8 @@ class CipherVaultApp:
         for col in cols:
             self.tree.heading(col, text=col)
             self.tree.column(col, width=self._s(widths.get(col, 100)))
+        if not get_features(self.user_version)["categories"]:
+            self.tree["displaycolumns"] = tuple(c for c in cols if c != "Categoría")
 
         sb = ttk.Scrollbar(tbl, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=sb.set)
@@ -3128,7 +3003,7 @@ class CipherVaultApp:
         for row_i,(lbl,val) in enumerate([
             ("👤 Usuario",     d["username"]),
             ("🌐 Página web",  d["url"] or "—"),
-            ("📂 Categoría",   d["category"] or "—"),
+            *([("📂 Categoría", d["category"] or "—")] if get_features(self.user_version)["categories"] else []),
             ("📅 Creada",      d["created_at"]),
             ("🔄 Actualizada", d["updated_at"]),
             ("🛡️ Fortaleza",   d["strength"]),
@@ -3240,10 +3115,11 @@ class CipherVaultApp:
         pe.pack(side="left")
         self._btn(pf, "👁️", lambda: self._toggle_vis(pe)).pack(side="left", padx=3)
 
-        self._label(body, "Categoría:", bold=True, color=C["muted"]).grid(row=3, column=0, sticky="w", pady=6)
-        ttk.Combobox(body, textvariable=cv, width=29,
-                     values=["General","Trabajo","Personal","Finanzas","Redes Sociales","Correo"],
-                     state="readonly").grid(row=3, column=1, padx=10, pady=6)
+        if get_features(self.user_version)["categories"]:
+            self._label(body, "Categoría:", bold=True, color=C["muted"]).grid(row=3, column=0, sticky="w", pady=6)
+            ttk.Combobox(body, textvariable=cv, width=29,
+                         values=["General","Trabajo","Personal","Finanzas","Redes Sociales","Correo"],
+                         state="readonly").grid(row=3, column=1, padx=10, pady=6)
 
         self._label(body, "Notas:", bold=True, color=C["muted"]).grid(row=4, column=0, sticky="nw", pady=6)
         ntxt = tk.Text(body, height=4, width=30, bg=C["card2"], fg=C["text"], font=("Segoe UI", 10))
@@ -3334,7 +3210,7 @@ class CipherVaultApp:
         f = self.content_frame
         self._label(f, "🛡️ Análisis de seguridad", font_size=20, bold=True).pack(anchor="w", pady=(0, 16))
 
-        if self.user_version == "free":
+        if not get_features(self.user_version)["security_analysis"]:
             self._label(f, "🔒 Esta función requiere un plan de pago.",
                         font_size=14, color=C["warning"]).pack(pady=30)
             self._btn(f, "💳 Ver planes", self._show_plans_screen, "Wompi.TButton").pack()
@@ -3547,7 +3423,8 @@ class CipherVaultApp:
         team_price = f"COP {team['precio_cop']:,.0f}".replace(",", ".")
         self._label(strip, f"👥 ¿Para tu empresa? Plan Equipo desde {team_price}/mes",
                     bold=True, color=team["color"]).pack(side="left")
-        self._label(strip, "  3, 5, 10 o usuarios ilimitados · un solo pago", color=C["muted"],
+        self._label(strip, "  Hasta 34 % menos por persona · registro de actividad e informe de seguridad",
+                    color=C["muted"],
                     font_size=9).pack(side="left")
         tk.Button(strip, text="Ver paquetes", command=lambda: [win.destroy(), self._choose_team_plan()],
                   bg=team["color"], fg="#000000", font=("Segoe UI", 10, "bold"), relief="flat",
@@ -3567,11 +3444,13 @@ class CipherVaultApp:
         options = []
         for key, plan in TEAM_PLANES.items():
             price = f"COP {plan['precio_cop']:,.0f}".replace(",", ".")
-            per_user = (f" · {plan['precio_cop'] // plan['usuarios']:,.0f} por usuario".replace(",", ".")
+            per_user = (f" · {plan['precio_cop'] // plan['usuarios']:,.0f} por persona".replace(",", ".")
+                        + (f" (−{plan['ahorro_pct']} %)" if plan["ahorro_pct"] > 0 else "")
                         if plan["usuarios"] else "")
             options.append((key, f"{plan['nombre'].split('· ')[1]} — {price}/mes{per_user}"))
-        key = self._choose("Plan Equipo", "Un solo pago de la empresa. Te llegan por correo los códigos "
-                                          "para repartir a tu equipo.", options)
+        key = self._choose("Plan Equipo", "Un solo pago mensual de la empresa; te llegan por correo los códigos "
+                                          "para repartir. Incluye Premium para cada persona, bóveda compartida "
+                                          "con roles, registro de actividad e informe de seguridad.", options)
         if key:
             self._show_wompi_checkout(key)
 
@@ -3681,10 +3560,6 @@ class CipherVaultApp:
         if self.is_developer:
             status = "Ilimitada ⚡"
             color  = C["primary"]
-        elif self.user_version == "trial":
-            _, rem, passed = TrialLicenseManager.is_trial_valid()
-            status = f"Prueba · {rem} días restantes"
-            color  = C["warning"]
         else:
             expiry = self.current_user.get("license_expiry") if self.current_user else None
             if expiry:
@@ -3809,13 +3684,6 @@ class CipherVaultApp:
             hotkey = getattr(self, "_hotkey", None)
             if hotkey and hotkey.error:
                 self._label(auto, f"⚠️ {hotkey.error}", color=C["warning"], font_size=9).pack(anchor="w", pady=(6, 0))
-            n_browsers = len(self.config.get("browser_clients", {}))
-            ext_row = tk.Frame(auto, bg=C["card"])
-            ext_row.pack(anchor="w", pady=(8, 0))
-            self._label(ext_row, f"🧩 Extensión del navegador: {n_browsers} conectada(s)" if n_browsers
-                        else "🧩 Extensión del navegador: sin conectar", color=C["muted"], font_size=9).pack(side="left")
-            if n_browsers:
-                self._btn(ext_row, "Desconectar", self._forget_browsers).pack(side="left", padx=6)
 
         # info versión
         if feats.get("sync"):
@@ -5119,6 +4987,8 @@ class CipherVaultApp:
         self._btn(ctrl, "🔄 Actualizar", self._tab_team).pack(side="left", padx=3)
         if team.is_admin:
             self._btn(ctrl, "👤 Miembros", self._team_members).pack(side="left", padx=3)
+            self._btn(ctrl, "📜 Actividad", self._team_activity).pack(side="left", padx=3)
+            self._btn(ctrl, "🛡️ Informe de seguridad", self._team_report).pack(side="left", padx=3)
         self._btn(ctrl, "🚪 Salir del equipo", self._team_leave).pack(side="right")
 
         tbl = tk.Frame(f, bg=C["card"])
@@ -5215,9 +5085,11 @@ class CipherVaultApp:
             self._label(body, val, wraplength=self._s(300), justify="left").grid(row=i, column=1, sticky="w", padx=10, pady=4)
         btns = tk.Frame(body, bg=C["card"])
         btns.grid(row=len(rows), column=0, columnspan=2, pady=(12, 0), sticky="w")
-        self._btn(btns, "📋 Copiar contraseña", lambda: [self._copy_secret(entry["password"]),
-                                                       messagebox.showinfo("✅", "Copiada (se borra en 30 s).")]
-                  ).pack(side="left", padx=(0, 6))
+        def copy_password():
+            self._copy_secret(entry["password"])
+            self._team_log_copy(entry)
+            messagebox.showinfo("✅", "Copiada (se borra en 30 s).")
+        self._btn(btns, "📋 Copiar contraseña", copy_password).pack(side="left", padx=(0, 6))
         if entry["username"]:
             self._btn(btns, "📋 Copiar usuario", lambda: [self.root.clipboard_clear(),
                                                         self.root.clipboard_append(entry["username"])]
@@ -5226,6 +5098,7 @@ class CipherVaultApp:
             def copy_code():
                 try:
                     self._copy_secret(cvx.totp_code(entry["totp"])[0])
+                    self._team_log_copy(entry, "el código 2FA")
                     messagebox.showinfo("✅", "Código 2FA copiado.")
                 except ValueError:
                     messagebox.showerror("2FA", "La clave 2FA guardada no es válida.")
@@ -5302,6 +5175,90 @@ class CipherVaultApp:
             return
         if self._team_save(team):
             self._tab_team()
+
+    def _team_log_copy(self, entry: dict, what: str = "la contraseña"):
+        """Anota en el registro de actividad que se copió un dato (sin molestar si falla)."""
+        team = getattr(self, "_team", None)
+        if not team:
+            return
+        try:
+            team.log_copy(entry, what)
+            team.save_merged(self._team_keys()[0])
+        except (cvs.SyncError, OSError) as exc:
+            log.warning("No se pudo anotar la copia en el registro del equipo: %s", exc)
+
+    def _team_activity(self):
+        """Registro de actividad del equipo (solo administradores): quién creó, editó, borró o
+        copió cada contraseña, y los cambios de miembros."""
+        team = getattr(self, "_team", None)
+        if not team or not team.is_admin:
+            return
+        try:
+            team = self._team = team.refresh(self._team_keys()[0])
+        except (cvs.SyncError, OSError):
+            pass
+        win = tk.Toplevel(self.root)
+        win.title("Actividad del equipo")
+        self._set_popup_geometry(win, 820, 560)
+        win.configure(bg=C["bg"])
+        win.transient(self.root)
+        self._label(win, f"📜 Actividad de {team.name}", font_size=16, bold=True).pack(pady=(18, 4))
+        self._label(win, f"Últimos {cvs.ACTIVITY_MAX} movimientos, del más reciente al más antiguo. "
+                         "Fechas en hora de Colombia.", color=C["muted"], font_size=9).pack(pady=(0, 8))
+        frame = tk.Frame(win, bg=C["card"])
+        frame.pack(fill="both", expand=True, padx=20)
+        cols = ("Fecha", "Persona", "Acción")
+        tree = ttk.Treeview(frame, columns=cols, show="headings", height=16)
+        for col, width in zip(cols, (150, 180, 420)):
+            tree.heading(col, text=col)
+            tree.column(col, width=self._s(width))
+        sb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=sb.set)
+        tree.pack(side="left", fill="both", expand=True, padx=6, pady=6)
+        sb.pack(side="right", fill="y")
+        for event in reversed(team.activity):
+            try:
+                when = (datetime.strptime(event["at"][:19], SQL_DATETIME) - timedelta(hours=5)).strftime("%d/%m/%Y %H:%M")
+            except (KeyError, ValueError):
+                when = event.get("at", "")
+            who = team.members.get(event.get("by"), {}).get("name") or event.get("by_name", "—")
+            tree.insert("", "end", values=(when, who, f"{event.get('action', '')} {event.get('target', '')}".strip()))
+        if not team.activity:
+            tree.insert("", "end", values=("—", "—", "Todavía no hay movimientos registrados."))
+        self._btn(win, "Cerrar", win.destroy).pack(pady=12)
+
+    def _team_report(self):
+        """Informe de seguridad de la bóveda del equipo (solo administradores)."""
+        team = getattr(self, "_team", None)
+        if not team or not team.is_admin:
+            return
+        rep = cvs.security_report(team.entries, lambda pwd: evaluate_strength(pwd)[0])
+        win = tk.Toplevel(self.root)
+        win.title("Informe de seguridad del equipo")
+        self._set_popup_geometry(win, 720, 600)
+        win.configure(bg=C["bg"])
+        win.transient(self.root)
+        color = C["success"] if rep["score"] >= 80 else C["warning"] if rep["score"] >= 50 else C["danger"]
+        self._label(win, f"🛡️ Seguridad de {team.name}", font_size=16, bold=True).pack(pady=(18, 4))
+        self._label(win, f"Puntaje: {rep['score']}/100 · {rep['total']} contraseña(s) compartida(s)",
+                    font_size=13, bold=True, color=color).pack(pady=(0, 10))
+        body = self._card(win, padx=22, pady=16)
+        body.pack(fill="both", expand=True, padx=20)
+        sections = [
+            ("🔴 Débiles", rep["weak"], "Cámbialas por una generada con el generador de CipherVault."),
+            ("🟠 Repetidas", sorted(set(rep["reused"])), "La misma contraseña en varios servicios: si se filtra una, caen todas."),
+            ("🕒 Sin cambiar en 6 meses", rep["stale"], "Conviene renovarlas, sobre todo si alguien salió del equipo."),
+            ("🔢 Sin código 2FA", rep["no_2fa"], "Si el servicio lo permite, activa la verificación en dos pasos."),
+        ]
+        for title, names, tip in sections:
+            self._label(body, f"{title}: {len(names)}", bold=True).pack(anchor="w", pady=(6, 0))
+            text = ", ".join(names[:12]) + (f" y {len(names) - 12} más" if len(names) > 12 else "")
+            self._label(body, text if names else "Ninguna 👍", color=C["text"] if names else C["success"],
+                        font_size=9, wraplength=self._s(620), justify="left").pack(anchor="w")
+            if names:
+                self._label(body, tip, color=C["muted"], font_size=9, wraplength=self._s(620),
+                            justify="left").pack(anchor="w")
+        self._btn(win, "Cerrar", win.destroy).pack(pady=12)
 
     def _team_members(self):
         team = getattr(self, "_team", None)
@@ -5387,130 +5344,6 @@ class CipherVaultApp:
         self._btn(btns, "🔁 Cambiar rol", change_role).pack(side="left", padx=5)
         self._btn(btns, "🚫 Quitar", remove, "Danger.TButton").pack(side="left", padx=5)
         self._btn(btns, "Cerrar", win.destroy).pack(side="left", padx=5)
-
-    # ─────────────────────────────────────────
-    #  EXTENSIÓN DEL NAVEGADOR (puente local)
-    # ─────────────────────────────────────────
-    def _start_bridge(self):
-        """Abre el servidor local para la extensión y registra el puente en Chrome/Edge/Brave."""
-        self._bridge_queue = queue.Queue()
-        self._bridge = cv_bridge.BridgeServer(self._bridge_handle)
-        if not self._bridge.start():
-            log.warning("No se pudo abrir el puente de la extensión")
-        if IS_WINDOWS and EXTENSION_IDS:
-            try:
-                if IS_FROZEN:
-                    host = str(Path(sys.executable).with_name("CipherVaultBridge.exe"))
-                else:
-                    host = cv_bridge.dev_host_script(sys.executable, str(Path(BASE_PATH) / "ciphervault_bridge.py"))
-                cv_bridge.register_native_host(host, EXTENSION_IDS)
-            except OSError as exc:
-                log.warning("No se pudo registrar el puente del navegador: %s", exc)
-        self.root.after(200, self._poll_bridge)
-
-    def _poll_bridge(self):
-        """Atiende en el hilo de Tk lo que el servidor no puede hacer solo (ventanas)."""
-        try:
-            while True:
-                kind, payload, event, holder = self._bridge_queue.get_nowait()
-                try:
-                    if kind == "associate":
-                        holder["ok"] = messagebox.askyesno(
-                            "Conectar extensión",
-                            f"Una extensión del navegador quiere conectarse a CipherVault:\n\n«{payload}»\n\n"
-                            "Si acabas de pulsar «Conectar» en la extensión de CipherVault, acepta. "
-                            "Si no fuiste tú, rechaza.")
-                    elif kind == "show":
-                        self.root.deiconify()
-                        self.root.lift()
-                        self.root.focus_force()
-                        holder["ok"] = True
-                finally:
-                    event.set()
-        except queue.Empty:
-            pass
-        self.root.after(200, self._poll_bridge)
-
-    def _ask_tk(self, kind: str, payload: str = "", timeout: float = 60) -> bool:
-        event, holder = threading.Event(), {"ok": False}
-        self._bridge_queue.put((kind, payload, event, holder))
-        event.wait(timeout)
-        return bool(holder["ok"])
-
-    def _browser_entries(self) -> list[dict]:
-        """Entradas personales y del equipo con página web, para la extensión."""
-        vault = self.current_user["vault"]
-        with db() as conn:
-            rows = conn.execute("SELECT id, service, username, url FROM passwords WHERE user_id=?",
-                                (self.current_user["id"],)).fetchall()
-        entries = [{"id": pid, "service": dec_text(vault, s), "username": dec_text(vault, u),
-                    "url": dec_text(vault, url)} for pid, s, u, url in rows]
-        if get_features(self.user_version).get("team") and self._team_path():
-            team = self._open_team(quiet=True)
-            if team:
-                entries += [{"id": f"t:{e['uid']}", "service": f"{e['service']} (equipo)",
-                             "username": e["username"], "url": e["url"]} for e in team.entries]
-        return entries
-
-    def _bridge_handle(self, request: dict) -> dict:
-        """Peticiones de la extensión (se ejecuta en el hilo del servidor)."""
-        action = str(request.get("action", ""))
-        client_id = str(request.get("client_id", ""))[:64]
-        client_key = str(request.get("client_key", ""))
-        clients = self.config.setdefault("browser_clients", {})
-        paired = bool(client_id) and hmac.compare_digest(
-            clients.get(client_id, ""), cv_bridge.client_key_hash(client_key)) and bool(client_key)
-        if action == "status":
-            return {"ok": True, "app": APP_NAME, "version": APP_VERSION, "associated": paired,
-                    "unlocked": bool(self.current_user)}
-        if action == "associate":
-            if paired:
-                return {"ok": True}
-            if len(client_key) < 32 or not client_id:
-                return {"ok": False, "error": "bad_request"}
-            label = str(request.get("browser", "Navegador"))[:60]
-            if not self._ask_tk("associate", label):
-                return {"ok": False, "error": "rejected"}
-            clients[client_id] = cv_bridge.client_key_hash(client_key)
-            self._save_config()
-            log.info("Extensión del navegador emparejada (%s)", label)
-            return {"ok": True}
-        if not paired:
-            return {"ok": False, "error": "not_associated"}
-        if action == "show":
-            self._ask_tk("show", timeout=5)
-            return {"ok": True}
-        if not self.current_user:
-            return {"ok": False, "error": "locked"}
-        url = str(request.get("url", ""))[:2000]
-        matches = cvx.match_url(url, self._browser_entries())
-        if action == "logins":
-            return {"ok": True, "items": [{"id": e["id"], "service": e["service"], "username": e["username"],
-                                           "weak": e["weak"]} for e in matches[:20]]}
-        if action == "credentials":
-            wanted = request.get("id")
-            entry = next((e for e in matches if e["id"] == wanted), None)
-            if not entry or (entry["weak"] and not request.get("confirm_weak")):
-                return {"ok": False, "error": "no_match"}
-            creds = self._credentials_for(wanted)
-            if not creds:
-                return {"ok": False, "error": "unreadable"}
-            username, password, totp = creds
-            code = ""
-            if totp and get_features(self.user_version).get("totp"):
-                try:
-                    code = cvx.totp_code(totp)[0]
-                except ValueError:
-                    code = ""
-            return {"ok": True, "username": username, "password": password, "totp": code}
-        return {"ok": False, "error": "unknown_action"}
-
-    def _forget_browsers(self):
-        self.config["browser_clients"] = {}
-        self._save_config()
-        messagebox.showinfo("Extensión", "Se desconectaron todas las extensiones. Para volver a usarla, "
-                                         "pulsa «Conectar» en la extensión.")
-        self._tab_settings()
 
     def _logout(self):
         """Cierra la sesión actual (olvida la clave de la bóveda) y regresa a la pantalla de login."""

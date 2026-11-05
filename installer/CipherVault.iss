@@ -49,14 +49,6 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "..\dist\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
-; Puente que usa la extensión del navegador (la app lo registra al abrirse)
-Source: "..\dist\CipherVaultBridge.exe"; DestDir: "{app}"; Flags: ignoreversion
-
-[Registry]
-; Al desinstalar se borra el registro del puente en Chrome, Edge y Brave.
-Root: HKCU; Subkey: "Software\Google\Chrome\NativeMessagingHosts\com.sca.ciphervault"; Flags: uninsdeletekey dontcreatekey
-Root: HKCU; Subkey: "Software\Microsoft\Edge\NativeMessagingHosts\com.sca.ciphervault"; Flags: uninsdeletekey dontcreatekey
-Root: HKCU; Subkey: "Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\com.sca.ciphervault"; Flags: uninsdeletekey dontcreatekey
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"

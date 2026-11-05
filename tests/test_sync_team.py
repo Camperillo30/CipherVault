@@ -180,3 +180,23 @@ def test_boveda_de_equipo_en_la_app(ui, monkeypatch, tmp_path):
     ids = [e["id"] for e in app._autotype_entries()]
     assert any(str(i).startswith("t:") for i in ids)
     assert app._credentials_for(ids[0])[1] == "123"
+
+
+def test_registro_de_actividad_e_informe(tmp_path):
+    a_priv, a_pub = cvs.new_member_keypair()
+    b_priv, b_pub = cvs.new_member_keypair()
+    team = cvs.TeamVault.create(tmp_path, "Pyme", a_pub, "Ana", "")
+    team.add_member(cvs.member_code(b_pub), "Beto", "", "editor")
+    team.upsert({"service": "Banco", "password": "123"})
+    team.save_merged(a_priv)
+    beto = cvs.TeamVault.open(team.path, b_priv)
+    entry = beto.upsert({"service": "Correo", "password": "123"})
+    beto.log_copy(entry)
+    beto.save_merged(b_priv)
+    ana = cvs.TeamVault.open(team.path, a_priv)
+    acciones = [(e["by_name"], e["action"], e["target"]) for e in ana.activity]
+    assert ("Ana", "creó", "Banco") in acciones and ("Beto", "copió la contraseña de", "Correo") in acciones
+    assert "Correo" not in team.path.read_text(encoding="utf-8")          # el registro va cifrado
+    rep = cvs.security_report(ana.entries, lambda p: "DÉBIL" if len(p) < 8 else "FUERTE")
+    assert rep["weak"] == ["Banco", "Correo"] and rep["reused"] == ["Banco", "Correo"] and rep["score"] == 0
+

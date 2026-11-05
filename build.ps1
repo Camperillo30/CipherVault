@@ -77,8 +77,6 @@ Test-RequiredProjectFiles -RequiredFiles @(
     "gestor_contrasenas_secure.py",
     "cv_extras.py",
     "cv_sync.py",
-    "cv_bridge.py",
-    "ciphervault_bridge.py",
     "requirements-desktop.txt",
     "CipherVault.spec"
 )
@@ -155,12 +153,10 @@ $embeddedDesktopConfig = [ordered]@{
     CIPHERVAULT_PRICE_PREMIUM_MENSUAL_COP = Get-ConfigValue -Key "CIPHERVAULT_PRICE_PREMIUM_MENSUAL_COP" -Default "9900"
     CIPHERVAULT_PRICE_PREMIUM_ANUAL_COP   = Get-ConfigValue -Key "CIPHERVAULT_PRICE_PREMIUM_ANUAL_COP" -Default "89900"
     CIPHERVAULT_PRICE_PREMIUM_VIDA_COP    = Get-ConfigValue -Key "CIPHERVAULT_PRICE_PREMIUM_VIDA_COP" -Default "149900"
-    CIPHERVAULT_PRICE_EQUIPO_3_COP          = Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_3_COP" -Default "39900"
-    CIPHERVAULT_PRICE_EQUIPO_5_COP          = Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_5_COP" -Default "59900"
-    CIPHERVAULT_PRICE_EQUIPO_10_COP         = Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_10_COP" -Default "99900"
+    CIPHERVAULT_PRICE_EQUIPO_3_COP          = Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_3_COP" -Default "24900"
+    CIPHERVAULT_PRICE_EQUIPO_5_COP          = Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_5_COP" -Default "37900"
+    CIPHERVAULT_PRICE_EQUIPO_10_COP         = Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_10_COP" -Default "64900"
     CIPHERVAULT_PRICE_EQUIPO_ILIMITADO_COP  = Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_ILIMITADO_COP" -Default "199900"
-    # IDs de la extensión publicada (Chrome Web Store / Edge), separados por comas
-    CIPHERVAULT_EXTENSION_IDS             = Get-ConfigValue -Key "CIPHERVAULT_EXTENSION_IDS"
 }
 
 
@@ -303,10 +299,6 @@ if (Test-Path $buildFolderPath) {
 if (Test-Path $distExePath) {
     Remove-Item $distExePath -Force
 }
-$distBridgePath = Join-Path $PWD "dist\CipherVaultBridge.exe"
-if (Test-Path $distBridgePath) {
-    Remove-Item $distBridgePath -Force
-}
 
 # Compila el ejecutable siguiendo CipherVault.spec (que ya sabe incluir
 # desktop_runtime_config.json y los íconos de assets/).
@@ -314,9 +306,6 @@ if (Test-Path $distBridgePath) {
 
 if (-not (Test-Path $distExePath)) {
     throw "No se genero el ejecutable esperado en $distExePath"
-}
-if (-not (Test-Path $distBridgePath)) {
-    throw "No se genero el puente del navegador en $distBridgePath"
 }
 
 # ── Firma de código (opcional) ─────────────────────────────────
@@ -369,26 +358,6 @@ function Invoke-CodeSign {
 }
 
 $exeSigned = Invoke-CodeSign -FilePath $distExePath
-$null = Invoke-CodeSign -FilePath $distBridgePath
-
-# ── Extensión del navegador: .zip listo para la Chrome Web Store ──
-$extensionZip = Join-Path $PWD "dist\CipherVault-extension.zip"
-if (Test-Path $extensionZip) { Remove-Item $extensionZip -Force }
-$extensionFiles = Get-ChildItem -Path "extension" -Recurse -File | Where-Object { $_.Extension -ne ".md" }
-$staging = Join-Path $env:TEMP "cv_extension_build"
-if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
-foreach ($file in $extensionFiles) {
-    $relative = $file.FullName.Substring((Resolve-Path "extension").Path.Length + 1)
-    $target = Join-Path $staging $relative
-    New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
-    Copy-Item $file.FullName $target
-}
-Compress-Archive -Path (Join-Path $staging "*") -DestinationPath $extensionZip
-Remove-Item $staging -Recurse -Force
-Write-Host "Extension lista para la tienda:" $extensionZip
-if ([string]::IsNullOrWhiteSpace($embeddedDesktopConfig.CIPHERVAULT_EXTENSION_IDS)) {
-    Write-Warning "CIPHERVAULT_EXTENSION_IDS esta vacio: la app no podra hablar con la extension hasta que pongas su ID (ver extension\TIENDA.md)."
-}
 
 # Resumen final para confirmar que el .exe quedó listo.
 $exeInfo = Get-Item $distExePath

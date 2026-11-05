@@ -33,7 +33,7 @@ a = Analysis(
         'cryptography.hazmat.primitives.hashes',
         'tkinter', 'tkinter.ttk', 'tkinter.messagebox', 'tkinter.simpledialog', 'tkinter.filedialog',
         'sqlite3', 'logging.handlers',
-        'cv_extras', 'cv_sync', 'cv_bridge',
+        'cv_extras', 'cv_sync',
     ],
     hookspath=[],
     hooksconfig={},

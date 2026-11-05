@@ -32,7 +32,6 @@ def ui(monkeypatch, tmp_path):
     monkeypatch.setattr(app, "_choose", lambda *a, **k: app.choices.pop(0) if app.choices else None)
     app.calls, app.answers = calls, answers
     yield app
-    app._bridge.stop()
     try:
         root.destroy()
     except tk.TclError:
@@ -59,7 +58,7 @@ def test_flujo_completo(ui):
     app = ui
     register_and_login(app)
     assert app.current_user and app.current_user["username"] == "ana"
-    assert app.user_version == "trial"
+    assert app.user_version == "free"
 
     # todas las pestañas dibujan sin error
     for tab in (app._tab_dashboard, app._tab_generator, app._tab_list, app._tab_security,

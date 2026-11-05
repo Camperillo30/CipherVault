@@ -90,37 +90,24 @@ def test_migracion_no_toca_tokens_de_otra_clave(app):
         assert conn.execute("SELECT password_encrypted FROM passwords").fetchone()[0] == foreign
 
 
-# ───────────── prueba gratuita ─────────────
-def test_prueba_vence_a_los_30_dias(app):
-    old = (datetime.now() - timedelta(days=45)).strftime(gcs.SQL_DATETIME)
-    open(gcs.INSTALL_FILE, "w").write(old)
-    valid, remaining, passed = gcs.TrialLicenseManager.is_trial_valid()
-    assert not valid and remaining == 0 and passed >= 45
+# ───────────── sin período de prueba ─────────────
+def test_sin_prueba_todo_es_gratis(app):
+    assert "trial" not in gcs.VERSIONS
+    app.is_developer = False
+    assert app._initial_version() == "free"
+    # una cuenta vieja guardada como "trial" queda en el plan gratis
+    assert gcs.compute_effective_version(make_user(app, version="trial"))[0] == "free"
+    free = gcs.get_features("free")
+    assert not free["security_analysis"] and not free["categories"] and not free["totp"]
+    assert free["max_passwords"] == gcs.FREE_MAX_PASSWORDS
 
 
-def test_borrar_archivo_no_reinicia_prueba(app):
-    old = (datetime.now() - timedelta(days=45)).strftime(gcs.SQL_DATETIME)
-    open(gcs.INSTALL_FILE, "w").write(old)
-    gcs.TrialLicenseManager.get_installation_date()   # copia a app_meta
-    os.remove(gcs.INSTALL_FILE)
-    assert not gcs.TrialLicenseManager.is_trial_valid()[0]
-
-
-def test_retroceso_del_reloj_no_extiende_prueba(app, monkeypatch):
-    start = datetime.now() - timedelta(days=29)
-    open(gcs.INSTALL_FILE, "w").write(start.strftime(gcs.SQL_DATETIME))
-    future = datetime.now() + timedelta(days=5)
-    gcs.TrialLicenseManager._write_meta("last_seen", future.strftime(gcs.SQL_DATETIME))
-    assert not gcs.TrialLicenseManager.is_trial_valid()[0]
-
-
-def test_cuenta_trial_se_reevalua_al_entrar(app):
-    user = make_user(app, version="trial")
-    open(gcs.INSTALL_FILE, "w").write((datetime.now() - timedelta(days=60)).strftime(gcs.SQL_DATETIME))
-    assert gcs.compute_effective_version(user)[0] == "free"
-    open(gcs.INSTALL_FILE, "w").write(datetime.now().strftime(gcs.SQL_DATETIME))
-    gcs.TrialLicenseManager._write_meta("install_date", datetime.now().strftime(gcs.SQL_DATETIME))
-    assert gcs.compute_effective_version(user)[0] == "trial"
+def test_equipo_sale_mas_barato_que_premium(app):
+    premium = gcs.PLANES["premium_mensual"]["precio_cop"]
+    for plan in gcs.TEAM_PLANES.values():
+        if plan["usuarios"]:
+            assert plan["precio_cop"] < premium * plan["usuarios"]
+            assert plan["ahorro_pct"] > 0
 
 
 # ───────────── versión efectiva y sello ─────────────
@@ -584,6 +571,6 @@ def test_codigo_de_equipo_no_atado_al_correo(app, make, monkeypatch):
 
 def test_paquetes_de_equipo():
     assert list(gcs.TEAM_PLANES) == ["equipo_3", "equipo_5", "equipo_10", "equipo_ilimitado"]
-    assert [p["precio_cop"] for p in gcs.TEAM_PLANES.values()] == [39900, 59900, 99900, 199900]
+    assert [p["precio_cop"] for p in gcs.TEAM_PLANES.values()] == [24900, 37900, 64900, 199900]
     assert [p["usuarios"] for p in gcs.TEAM_PLANES.values()] == [3, 5, 10, None]
     assert all(p["plan"] == "equipo" for p in gcs.TEAM_PLANES.values())
