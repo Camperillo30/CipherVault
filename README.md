@@ -173,7 +173,7 @@ ciphervaultpass@gmail.com
 
 ## Autor
 
-**Santiago Cuervo Aldana**, de **S.C.A**. Estudiante de Ciencias de la Computación en la Universidad Nacional de Colombia, sede Manizales.
+**Santiago Cuervo Aldana**.
 
 ---
 
