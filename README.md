@@ -73,7 +73,7 @@ En Mac no están la auto-escritura (Ctrl + Alt + A), Windows Hello ni la extensi
 - `cv_bridge.py` y `ciphervault_bridge.py`: puente local con la extensión del navegador (`CipherVaultBridge.exe`).
 - `extension/`: la extensión (Manifest V3). `extension/TIENDA.md` explica cómo publicarla y `extension/PRIVACIDAD.md` es su política de privacidad.
 - `installer/CipherVault.iss`: instalador de Windows (Inno Setup 6 o 7), lo compila `build.ps1`.
-- `.github/workflows/release.yml` (con `CipherVault-mac.spec`): al publicar un release en GitHub, GitHub Actions compila el instalador de Windows, la extensión y la app de macOS (`CipherVault-macOS.zip`). Necesita los secretos `CIPHERVAULT_ACTIVATION_URL` y `CIPHERVAULT_ACTIVATION_SECRET` en *Settings → Secrets and variables → Actions*.
+- `.github/workflows/release.yml` (con `CipherVault-mac.spec`): al subir una etiqueta `v*` desde PyCharm (o al publicar un release en GitHub), GitHub Actions compila el instalador de Windows, la extensión y la app de macOS (`CipherVault-macOS.zip`). Necesita los secretos `CIPHERVAULT_ACTIVATION_URL` y `CIPHERVAULT_ACTIVATION_SECRET` en *Settings → Secrets and variables → Actions*.
 - `Main.py`: punto de entrada; registra los errores de arranque en el log.
 - `build.ps1`: crea el entorno, genera `desktop_runtime_config.json` (sin nada de developer) y compila `dist\CipherVault.exe`.
 - `CipherVault.spec`: especificación de PyInstaller (se niega a compilar si el JSON trae claves de developer).
@@ -116,9 +116,19 @@ CIPHERVAULT_SIGN_THUMBPRINT=HUELLA_SHA1          # certificado instalado en Wind
 # o bien
 CIPHERVAULT_SIGN_PFX=C:\ruta\certificado.pfx
 CIPHERVAULT_SIGN_PFX_PASSWORD=...
-``` El `.exe` incluye los links de Wompi, la URL y el secreto del servicio de activación y los precios; **no** incluye ninguna credencial de developer. Antes de publicarlo, comprueba que el build no trae secretos (el script ya lo valida). Recomendado: firmar el ejecutable con un certificado de firma de código para evitar avisos de SmartScreen y falsos positivos del antivirus.
+```
+
+El `.exe` incluye los links de Wompi, la URL y el secreto del servicio de activación y los precios; **no** incluye ninguna credencial de developer. Antes de publicarlo, comprueba que el build no trae secretos (el script ya lo valida). Recomendado: firmar el ejecutable con un certificado de firma de código para evitar avisos de SmartScreen y falsos positivos del antivirus.
 
 No distribuyas: `.env`, `developer.license`, `dev_credentials.json`, `desktop_runtime_config.json` suelto.
+
+### Publicar una versión
+
+1. Sube `APP_VERSION` en `Gestor_contrasenas_secure.py` (por ejemplo a `3.2.0`) y haz *Commit and Push* en PyCharm.
+2. Crea la etiqueta en PyCharm (*Git > New Tag*): `v3.2.0` para una versión definitiva, o `v3.2.0-beta` (con guion) para una pre-release.
+3. Súbela: *Git > Push*, con la casilla **Push tags** marcada.
+
+GitHub Actions crea el release y le sube el instalador de Windows, la versión portable, la extensión y la app de macOS. Si la etiqueta no coincide con `APP_VERSION`, se detiene sin compilar. También sigue funcionando publicar un release desde la web de GitHub.
 
 ## Seguridad (resumen)
 

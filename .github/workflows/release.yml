@@ -1,11 +1,14 @@
 # Compila CipherVault y sube los archivos a un release de GitHub.
 #
-# Se ejecuta solo al PUBLICAR un release (también si es pre-release) y sube:
+# Se ejecuta al subir una etiqueta desde PyCharm (Git > New Tag "v3.2.0" y Push con "Push tags"),
+# al PUBLICAR un release desde la web de GitHub (también si es pre-release) o a mano, y sube:
 #   - CipherVault-Setup.exe        instalador de Windows (build.ps1 + Inno Setup)
 #   - CipherVault-portable.exe     la app sin instalador
 #   - CipherVault-extension.zip    la extensión del navegador
 #   - CipherVault-macOS.zip        la app de macOS (CipherVault.app)
-# También se puede lanzar a mano: Actions → Release → Run workflow (con la etiqueta).
+# Con etiqueta: tiene que coincidir con APP_VERSION de Gestor_contrasenas_secure.py. "v3.2.0" crea
+# una versión definitiva; "v3.2.0-beta" (con guion), una pre-release.
+# También se puede lanzar a mano: Actions → Release → Run workflow (con la etiqueta de un release).
 #
 # Secretos necesarios (Settings → Secrets and variables → Actions → New repository secret):
 #   CIPHERVAULT_ACTIVATION_URL      (el mismo valor del .env)
@@ -14,6 +17,8 @@
 name: Release
 
 on:
+  push:
+    tags: ["v*"]
   release:
     types: [published]
   workflow_dispatch:
@@ -26,15 +31,65 @@ permissions:
   contents: write
 
 env:
-  TAG: ${{ inputs.tag || github.event.release.tag_name }}
+  TAG: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
 
 jobs:
+  # Con una etiqueta subida desde PyCharm: comprueba la versión y crea el release (los demás jobs
+  # le suben los archivos). Si el release ya existía (se publicó desde la web), no hace nada: esa
+  # publicación ya lanzó este mismo flujo.
+  preparar:
+    runs-on: ubuntu-latest
+    outputs:
+      seguir: ${{ steps.p.outputs.seguir }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
+      - id: p
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "push" ]; then echo "seguir=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          APP_VERSION="$(sed -n 's/^APP_VERSION *= *"\([^"]*\)".*/\1/p' Gestor_contrasenas_secure.py | head -1)"
+          BASE="${TAG#v}"; BASE="${BASE%%-*}"
+          if [ -z "$APP_VERSION" ] || [ "$BASE" != "$APP_VERSION" ]; then
+            echo "::error::La etiqueta $TAG no coincide con APP_VERSION = $APP_VERSION en Gestor_contrasenas_secure.py. Corrige una de las dos, borra la etiqueta y vuelve a crearla."
+            exit 1
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "El release $TAG ya existe (se publicó desde la web): ese evento ya compila y sube los archivos."
+            echo "seguir=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          case "$TAG" in *-*) FLAG=--prerelease ;; *) FLAG=--latest ;; esac
+          VERSION="${TAG#v}"
+          {
+            echo "## Descargar CipherVault $VERSION"
+            echo
+            echo "| Sistema | Archivo |"
+            echo "| --- | --- |"
+            echo "| **Windows 10 u 11** (instalador) | \`CipherVault-Setup.exe\` |"
+            echo "| Windows sin instalar | \`CipherVault-portable.exe\` |"
+            echo "| **Mac** (macOS 11 o superior, chip Apple M1 o más nuevo) | \`CipherVault-macOS.zip\` |"
+            echo "| Extensión del navegador | \`CipherVault-extension.zip\` |"
+            echo
+            echo "Los archivos aparecen aquí unos minutos después de publicar, cuando GitHub termina de compilarlos."
+            echo
+            echo "### Novedades"
+            echo
+            echo "- (escribe aquí los cambios de esta versión)"
+          } > notas.md
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "CipherVault $VERSION" --notes-file notas.md "$FLAG"
+          echo "seguir=true" >> "$GITHUB_OUTPUT"
+
   windows:
+    needs: preparar
+    if: needs.preparar.outputs.seguir == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.event.release.tag_name }}
+          ref: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
       - name: Revisar secretos
         shell: pwsh
         env:
@@ -70,11 +125,13 @@ jobs:
           gh release upload $env:TAG @files --clobber --repo $env:GITHUB_REPOSITORY
 
   macos:
+    needs: preparar
+    if: needs.preparar.outputs.seguir == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.event.release.tag_name }}
+          ref: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
