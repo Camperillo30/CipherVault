@@ -1,3 +1,6 @@
+> [!CAUTION]
+> **CipherVault está en beta y todavía no está lista para instalarse.** Es una versión de prueba: puede tener errores, cambiar sin aviso o perder datos. No la uses para guardar tus contraseñas reales ni la instales en equipos de trabajo hasta que salga la versión estable.
+
 <p align="center">
   <img src="docs/icono.png" width="96" alt="Ícono de CipherVault">
 </p>
@@ -8,8 +11,6 @@
   Gestor de contraseñas de escritorio para <b>Windows</b> y <b>macOS</b> (Python 3.11 + Tkinter). Los datos viven cifrados en una base SQLite local y la app se genera con PyInstaller.<br>
   Pensado para usuarios y pymes en Colombia, con licencias por plan.
 </p>
-
-> ⚠️ **Versión de prueba (pre-release).** Puedes descargarla y probarla, pero todavía está en etapa de pruebas.
 
 ## Descargar
 
