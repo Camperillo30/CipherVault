@@ -41,9 +41,9 @@ La **clave del registro** es el `code_hash`. Crea un segundo Data Store `CipherV
 | `premium_mensual` | 9.900 COP (`990000` centavos) | `premium` | 1 |
 | `premium_anual` | 89.900 COP (`8990000` centavos) | `premium` | 12 |
 | `premium_vida` | 149.900 COP (`14990000` centavos) | `premium` | 1200 |
-| `equipo_3` (`5fZGtj`) | 24.900 COP (`2490000`) | `equipo` | 1, **3 códigos** |
-| `equipo_5` (`1TY6Z1`) | 37.900 COP (`3790000`) | `equipo` | 1, **5 códigos** |
-| `equipo_10` (`KUzO5b`) | 64.900 COP (`6490000`) | `equipo` | 1, **10 códigos** |
+| `equipo_3` (`eBC1hf`) | 24.900 COP (`2490000`) | `equipo` | 1, **3 códigos** |
+| `equipo_5` (`5znGkS`) | 37.900 COP (`3790000`) | `equipo` | 1, **5 códigos** |
+| `equipo_10` (`wnQAUN`) | 64.900 COP (`6490000`) | `equipo` | 1, **10 códigos** |
 | `equipo_ilimitado` (`bwpwwK`) | 199.900 COP (`19990000`) | `equipo` | 1, **1 código de empresa** (hasta 100 equipos) |
 
 Todos están creados y conectados en Make. Cada rama comprueba el ID del link en la referencia del pago **y** el monto exacto.

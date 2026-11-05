@@ -134,12 +134,17 @@ function Get-ConfigJsonMap {
 }
 
 # Links de pago reales de Wompi (no son secretos). Se usan si .env no define CIPHERVAULT_WOMPI_LINK_MAP.
-$defaultWompiLinks = '{"premium_mensual":"https://checkout.wompi.co/l/KepI4g","premium_anual":"https://checkout.wompi.co/l/I75Zba","premium_vida":"https://checkout.wompi.co/l/nfKj8q","equipo_3":"https://checkout.wompi.co/l/5fZGtj","equipo_5":"https://checkout.wompi.co/l/1TY6Z1","equipo_10":"https://checkout.wompi.co/l/KUzO5b","equipo_ilimitado":"https://checkout.wompi.co/l/bwpwwK"}'
+$defaultWompiLinks = '{"premium_mensual":"https://checkout.wompi.co/l/KepI4g","premium_anual":"https://checkout.wompi.co/l/I75Zba","premium_vida":"https://checkout.wompi.co/l/nfKj8q","equipo_3":"https://checkout.wompi.co/l/eBC1hf","equipo_5":"https://checkout.wompi.co/l/5znGkS","equipo_10":"https://checkout.wompi.co/l/wnQAUN","equipo_ilimitado":"https://checkout.wompi.co/l/bwpwwK"}'
 $wompiLinkMap = Get-ConfigJsonMap -Key "CIPHERVAULT_WOMPI_LINK_MAP" -Default $defaultWompiLinks
+# Links viejos del plan Equipo (precios anteriores): si el .env todavía los trae, se reemplazan.
+$retiredWompiLinks = @("https://checkout.wompi.co/l/5fZGtj", "https://checkout.wompi.co/l/1TY6Z1", "https://checkout.wompi.co/l/KUzO5b")
 # Completa con los links por defecto los planes que el .env no trae (por ejemplo, los de Equipo).
 foreach ($prop in ($defaultWompiLinks | ConvertFrom-Json).PSObject.Properties) {
     if (-not ($wompiLinkMap.PSObject.Properties.Name -contains $prop.Name)) {
         $wompiLinkMap | Add-Member -NotePropertyName $prop.Name -NotePropertyValue $prop.Value
+    } elseif ($retiredWompiLinks -contains ([string]$wompiLinkMap.($prop.Name)).Trim()) {
+        Write-Warning "El .env trae un link viejo para $($prop.Name); se usa el nuevo: $($prop.Value)"
+        $wompiLinkMap.($prop.Name) = $prop.Value
     }
 }
 
@@ -153,9 +158,9 @@ $embeddedDesktopConfig = [ordered]@{
     CIPHERVAULT_PRICE_PREMIUM_MENSUAL_COP = Get-ConfigValue -Key "CIPHERVAULT_PRICE_PREMIUM_MENSUAL_COP" -Default "9900"
     CIPHERVAULT_PRICE_PREMIUM_ANUAL_COP   = Get-ConfigValue -Key "CIPHERVAULT_PRICE_PREMIUM_ANUAL_COP" -Default "89900"
     CIPHERVAULT_PRICE_PREMIUM_VIDA_COP    = Get-ConfigValue -Key "CIPHERVAULT_PRICE_PREMIUM_VIDA_COP" -Default "149900"
-    CIPHERVAULT_PRICE_EQUIPO_3_COP          = Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_3_COP" -Default "24900"
-    CIPHERVAULT_PRICE_EQUIPO_5_COP          = Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_5_COP" -Default "37900"
-    CIPHERVAULT_PRICE_EQUIPO_10_COP         = Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_10_COP" -Default "64900"
+    CIPHERVAULT_PRICE_EQUIPO_3_COP          = $(if ((Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_3_COP" -Default "24900") -eq "39900") { "24900" } else { Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_3_COP" -Default "24900" })
+    CIPHERVAULT_PRICE_EQUIPO_5_COP          = $(if ((Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_5_COP" -Default "37900") -eq "59900") { "37900" } else { Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_5_COP" -Default "37900" })
+    CIPHERVAULT_PRICE_EQUIPO_10_COP         = $(if ((Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_10_COP" -Default "64900") -eq "99900") { "64900" } else { Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_10_COP" -Default "64900" })
     CIPHERVAULT_PRICE_EQUIPO_ILIMITADO_COP  = Get-ConfigValue -Key "CIPHERVAULT_PRICE_EQUIPO_ILIMITADO_COP" -Default "199900"
 }
 

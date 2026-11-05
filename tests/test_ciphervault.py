@@ -556,7 +556,7 @@ def test_reparacion_sin_codigo_guardado_no_aplica(app, make):
 
 def test_codigo_de_equipo_no_atado_al_correo(app, make, monkeypatch):
     """Los paquetes de Equipo los paga la empresa: el código sirve en la cuenta de cualquier empleado."""
-    make.add(email="", code="TEAM-2345-6789-ABCD", plan="equipo", ref="5fZGtj-PAGO-1")
+    make.add(email="", code="TEAM-2345-6789-ABCD", plan="equipo", ref="eBC1hf-PAGO-1")
     make_user(app)
     make_user(app, username="beto", email="beto@empresa.com")
     assert LAM.redeem("TEAM-2345-6789-ABCD", "ana", "ana@example.com")["plan"] == "equipo"
@@ -574,3 +574,15 @@ def test_paquetes_de_equipo():
     assert [p["precio_cop"] for p in gcs.TEAM_PLANES.values()] == [24900, 37900, 64900, 199900]
     assert [p["usuarios"] for p in gcs.TEAM_PLANES.values()] == [3, 5, 10, None]
     assert all(p["plan"] == "equipo" for p in gcs.TEAM_PLANES.values())
+
+
+def test_links_viejos_de_equipo_no_se_usan(monkeypatch):
+    monkeypatch.setenv("CIPHERVAULT_WOMPI_LINK_MAP", '{"equipo_3": "https://checkout.wompi.co/l/5fZGtj"}')
+    import importlib
+    mod = importlib.reload(gcs)
+    try:
+        assert mod.WOMPI_LINK_MAP["equipo_3"] == "https://checkout.wompi.co/l/eBC1hf"
+        assert mod.WOMPI_LINK_MAP["equipo_5"].endswith("5znGkS") and mod.WOMPI_LINK_MAP["equipo_10"].endswith("wnQAUN")
+    finally:
+        monkeypatch.delenv("CIPHERVAULT_WOMPI_LINK_MAP")
+        importlib.reload(gcs)

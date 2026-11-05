@@ -268,13 +268,21 @@ DEFAULT_WOMPI_LINKS = {
     "premium_mensual":  "https://checkout.wompi.co/l/KepI4g",
     "premium_anual":    "https://checkout.wompi.co/l/I75Zba",
     "premium_vida":     "https://checkout.wompi.co/l/nfKj8q",
-    "equipo_3":         "https://checkout.wompi.co/l/5fZGtj",
-    "equipo_5":         "https://checkout.wompi.co/l/1TY6Z1",
-    "equipo_10":        "https://checkout.wompi.co/l/KUzO5b",
+    "equipo_3":         "https://checkout.wompi.co/l/eBC1hf",
+    "equipo_5":         "https://checkout.wompi.co/l/5znGkS",
+    "equipo_10":        "https://checkout.wompi.co/l/wnQAUN",
     "equipo_ilimitado": "https://checkout.wompi.co/l/bwpwwK",
 }
+# Links viejos que ya no se usan (precios anteriores del plan Equipo): si un .env antiguo
+# todavía los trae, se usan los de DEFAULT_WOMPI_LINKS.
+RETIRED_WOMPI_LINKS = {
+    "https://checkout.wompi.co/l/5fZGtj",
+    "https://checkout.wompi.co/l/1TY6Z1",
+    "https://checkout.wompi.co/l/KUzO5b",
+}
 WOMPI_LINK_MAP = {**DEFAULT_WOMPI_LINKS,
-                  **{k: v for k, v in _env_json_map("CIPHERVAULT_WOMPI_LINK_MAP").items() if v}}
+                  **{k: v for k, v in _env_json_map("CIPHERVAULT_WOMPI_LINK_MAP").items()
+                     if v and v.strip() not in RETIRED_WOMPI_LINKS}}
 
 _PREMIUM_FEATURES = [
     "Contraseñas ilimitadas",
@@ -333,10 +341,16 @@ _TEAM_FEATURES = [
 ]
 
 
+# Precios anteriores del plan Equipo (3, 5 y 10 usuarios): si un .env viejo los trae, se ignoran.
+_RETIRED_TEAM_PRICES = {39900, 59900, 99900}
+
+
 def _team_plan(key: str, users: int | None, default_price: int) -> dict:
     """Paquete del plan Equipo. users=None → usuarios ilimitados (un código de empresa)."""
     label = f"{users} usuarios" if users else "Usuarios ilimitados"
     price = _env_int(f"CIPHERVAULT_PRICE_{key.upper()}_COP", default_price)
+    if price in _RETIRED_TEAM_PRICES:          # precio viejo de un .env antiguo
+        price = default_price
     premium = PLANES["premium_mensual"]["precio_cop"]
     saving = round(100 * (1 - price / (premium * users))) if users and premium else 0
     return {
