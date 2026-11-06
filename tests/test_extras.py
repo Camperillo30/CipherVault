@@ -90,6 +90,43 @@ def test_match_entries():
     assert ids("Sign in to GitHub · GitHub — Mozilla Firefox") == [4]
     assert ids("Nueva pestaña - Google Chrome") == []          # 'google' solo no basta
     assert ids("") == []
+    # sin importar mayúsculas, tildes ni espacios
+    assert ids("MercadoLibre - Google Chrome") == []
+    entries.append({"id": 5, "service": "Mercado Libre", "url": ""})
+    assert ids("MercadoLibre Colombia - Google Chrome") == [5]
+
+
+def test_match_entries_por_direccion():
+    entries = [{"id": 1, "service": "Facebook", "url": ""},
+               {"id": 2, "service": "Correo", "url": "https://mail.google.com"},
+               {"id": 3, "service": "Banco", "url": "https://www.bancolombia.com.co/personas"},
+               {"id": 4, "service": "GitHub", "url": "https://github.com"},
+               {"id": 5, "service": "Mercado Libre", "url": ""},
+               {"id": 6, "service": "netflix.com", "url": ""},
+               {"id": 7, "service": "Google Drive", "url": "https://drive.google.com"}]
+    ids = lambda u: [e["id"] for e in cvx.match_entries_by_url(u, entries)]  # noqa: E731
+    # el título ya no importa: basta la dirección
+    assert ids("https://www.facebook.com/login.php") == [1]
+    assert ids("m.facebook.com") == [1]
+    assert ids("https://svpersonas.apps.bancolombia.com.co/autenticacion") == [3]
+    assert ids("github.com/login") == [4]
+    assert ids("https://www.mercadolibre.com.co/") == [5]
+    assert ids("https://www.netflix.com/co/login") == [6]
+    assert ids("https://mail.google.com/mail/u/0/") == [2, 7]          # host exacto primero
+    # página falsa con el nombre en la ruta o en otro dominio: no coincide
+    assert ids("https://facebook-login.example.com/facebook.com") == []
+    assert ids("https://bancolombia.com.co.evil.net/") == []
+    # texto de búsqueda o páginas internas del navegador
+    assert ids("facebook login") == []
+    assert ids("chrome://newtab") == []
+    assert ids("") == []
+
+
+def test_registrable_domain():
+    assert cvx.registrable_domain("mail.google.com") == "google.com"
+    assert cvx.registrable_domain("svp.bancolombia.com.co") == "bancolombia.com.co"
+    assert cvx.registrable_domain("github.com") == "github.com"
+    assert cvx.registrable_domain("www.gov.co") == "www.gov.co"
 
 
 def test_autoescritura_desde_la_app(ui, monkeypatch):
@@ -112,6 +149,21 @@ def test_autoescritura_desde_la_app(ui, monkeypatch):
     assert typed == [("ana@git", "Zq9#mLp2$vXr8&Kd", False)]
     app._on_autotype(1, "Netflix - Google Chrome")
     assert "No hay ninguna contraseña" in toasts[-1]
+
+    # En un navegador manda la DIRECCIÓN: el título falso no basta y la página real sí.
+    typed.clear()
+    monkeypatch.setattr(cvx, "is_browser_window", lambda h: True)
+    monkeypatch.setattr(cvx, "browser_url", lambda h: "https://github-login.example.net/session")
+    app._on_autotype(1, "Sign in to GitHub · GitHub - Google Chrome")
+    assert "github-login.example.net" in toasts[-1] and not typed
+    monkeypatch.setattr(cvx, "browser_url", lambda h: "github.com/login")
+    app._on_autotype(1, "Iniciar sesión - Google Chrome")       # título sin el nombre
+    for _ in range(30):
+        app.root.update(); app.root.after(20); app.root.update_idletasks()
+        if typed:
+            break
+        import time; time.sleep(0.05)
+    assert typed == [("ana@git", "Zq9#mLp2$vXr8&Kd", False)]
 
 
 # ── importar CSV y 2FA en la interfaz ────────────────────────

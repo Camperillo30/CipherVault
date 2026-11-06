@@ -27,7 +27,9 @@ import os
 import queue
 import re
 import struct
+import sys
 import threading
+import unicodedata
 import time
 import urllib.parse
 from datetime import datetime
@@ -338,11 +340,49 @@ def build_emergency_kit_pdf(username: str, email: str, data_folder: str,
 
 
 # ══════════════════════════════════════════════
-#  AUTO-ESCRITURA (atajo global, solo Windows)
+#  AUTO-ESCRITURA (atajo global: Windows y macOS)
 # ══════════════════════════════════════════════
-AUTOTYPE_HOTKEY_LABEL = "Ctrl + Alt + A"
+# Cómo se reconoce el sitio:
+#   1. Si la ventana activa es un navegador, se lee la DIRECCIÓN de la pestaña (Windows: UI
+#      Automation sobre la barra de direcciones; Mac: AppleScript) y se compara su dominio con
+#      la página web guardada (o, si la entrada no tiene página, con el nombre del servicio).
+#      Una página falsa con el mismo título (phishing) no coincide.
+#   2. Si no es un navegador, o no se pudo leer la dirección (p. ej. Firefox en Mac), se usa el
+#      título de la ventana, como antes.
+IS_MAC = sys.platform == "darwin"
+AUTOTYPE_HOTKEY_LABEL = "Ctrl + Option + A" if IS_MAC else "Ctrl + Alt + A"
 _GENERIC_TITLE_WORDS = {"google", "chrome", "edge", "firefox", "opera", "brave", "microsoft",
-                        "mozilla", "inicio", "login", "sign", "iniciar", "sesión", "sesion", "nueva", "pestaña"}
+                        "mozilla", "inicio", "login", "sign", "iniciar", "sesión", "sesion", "nueva", "pestaña",
+                        "safari", "vivaldi", "arc"}
+# Sufijos de segundo nivel habituales: 'banco.com.co' → dominio registrable 'banco.com.co'.
+_SECOND_LEVEL = {"com", "co", "gov", "gob", "edu", "org", "net", "ac", "mil", "nom", "or", "ne"}
+
+
+def _norm(text: str) -> str:
+    """Minúsculas, sin tildes ni espacios/símbolos: 'Mercado Libre' → 'mercadolibre'."""
+    text = unicodedata.normalize("NFKD", (text or "").lower())
+    return "".join(ch for ch in text if ch.isalnum() and not unicodedata.combining(ch))
+
+
+def registrable_domain(host: str) -> str:
+    """'mail.google.com' → 'google.com'; 'svp.bancolombia.com.co' → 'bancolombia.com.co'."""
+    labels = [p for p in (host or "").lower().strip(".").split(".") if p]
+    if len(labels) <= 2:
+        return ".".join(labels)
+    if len(labels[-1]) == 2 and labels[-2] in _SECOND_LEVEL:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
+def _page_host(url: str) -> str:
+    """Host de lo que muestra la barra de direcciones, o '' si no parece una dirección
+    (texto de búsqueda, página interna del navegador...)."""
+    url = (url or "").strip()
+    if not url or " " in url or url.lower().startswith(("chrome:", "edge:", "about:", "brave:", "file:",
+                                                         "view-source:", "opera:", "vivaldi:")):
+        return ""
+    host = _host_from_url(url)
+    return host if host and "." in host and not host.startswith(".") else ""
 
 
 def _entry_keywords(service: str, url: str) -> list[str]:
@@ -357,31 +397,79 @@ def _entry_keywords(service: str, url: str) -> list[str]:
     host = _host_from_url(url)
     if host:
         words.add(host)
-        base = host.split(".")
-        if len(base) >= 2 and len(base[-2]) >= 3:
-            words.add(base[-2])           # 'mail.google.com' → 'google'; 'bancolombia.com' → 'bancolombia'
+        base = registrable_domain(host).split(".")
+        if base and len(base[0]) >= 3:
+            words.add(base[0])           # 'mail.google.com' → 'google'; 'bancolombia.com.co' → 'bancolombia'
     return [w for w in words if len(w) >= 3 and w not in _GENERIC_TITLE_WORDS]
 
 
 def match_entries(window_title: str, entries: list[dict]) -> list[dict]:
-    """Entradas cuya palabra clave aparece en el título de la ventana, de la coincidencia
-    más larga (más específica) a la más corta. Cada entrada: {id, service, url, ...}."""
+    """Por TÍTULO de ventana (programas que no son navegador): entradas cuya palabra clave
+    aparece en el título, de la coincidencia más larga a la más corta. No distingue
+    mayúsculas, tildes ni espacios ('MercadoLibre' encuentra 'Mercado Libre')."""
     title = (window_title or "").lower()
     if not title:
         return []
+    flat = _norm(title)
     scored = []
     for entry in entries:
-        best = max((len(k) for k in _entry_keywords(entry.get("service", ""), entry.get("url", ""))
-                    if k in title), default=0)
+        best = 0
+        for k in _entry_keywords(entry.get("service", ""), entry.get("url", "")):
+            nk = _norm(k)
+            if k in title or (len(nk) >= 3 and nk in flat):
+                best = max(best, len(k))
         if best:
             scored.append((best, entry))
     scored.sort(key=lambda pair: -pair[0])
     return [entry for _, entry in scored]
 
 
-def autotype_supported() -> bool:
-    return os.name == "nt"
+def match_entries_by_url(page_url: str, entries: list[dict]) -> list[dict]:
+    """Por DIRECCIÓN de la página (navegadores). Puntaje: mismo host (3) > mismo dominio
+    (2) > el nombre del servicio es el del dominio, p. ej. 'Netflix' en netflix.com (1)."""
+    host = _page_host(page_url)
+    if not host:
+        return []
+    base = registrable_domain(host)
+    name = _norm(base.split(".")[0])
+    scored = []
+    for entry in entries:
+        score = 0
+        saved = _page_host(entry.get("url", ""))
+        service = (entry.get("service") or "").strip()
+        if not saved and "." in service and " " not in service:
+            saved = _page_host(service)               # servicio escrito como dominio: 'netflix.com'
+        if saved:
+            if saved == host:
+                score = 3
+            elif registrable_domain(saved) == base:
+                score = 2
+        elif len(name) >= 3:
+            svc = _norm(service.split("(")[0])
+            if svc == name or (len(name) >= 4 and svc.startswith(name)):
+                score = 1
+        if score:
+            scored.append((score, entry))
+    scored.sort(key=lambda pair: -pair[0])
+    return [entry for _, entry in scored]
 
+
+def autotype_supported() -> bool:
+    if os.name == "nt":
+        return True
+    if IS_MAC:
+        try:
+            import AppKit  # noqa: F401
+            import Quartz  # noqa: F401
+            return True
+        except ImportError:
+            return False
+    return False
+
+
+# ── Windows ────────────────────────────────────────────────
+_WIN_BROWSERS = {"chrome.exe", "msedge.exe", "brave.exe", "opera.exe", "opera_gx.exe", "vivaldi.exe",
+                 "firefox.exe", "arc.exe", "chromium.exe"}
 
 if os.name == "nt":                       # pragma: no cover - solo Windows
     import ctypes
@@ -421,32 +509,204 @@ if os.name == "nt":                       # pragma: no cover - solo Windows
     _user32.PostThreadMessageW.argtypes = (wintypes.DWORD, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
     _user32.GetAsyncKeyState.argtypes = (ctypes.c_int,)
     _user32.GetAsyncKeyState.restype = ctypes.c_short
+    _user32.GetWindowThreadProcessId.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.DWORD))
+    _kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    _kernel32.OpenProcess.restype = wintypes.HANDLE
+    _kernel32.QueryFullProcessImageNameW.argtypes = (wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+                                                     ctypes.POINTER(wintypes.DWORD))
+    _kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+
+
+def _win_process_name(hwnd: int) -> str:     # pragma: no cover - solo Windows
+    """'chrome.exe' para la ventana `hwnd` (minúsculas), o ''."""
+    pid = wintypes.DWORD()
+    _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    handle = _kernel32.OpenProcess(0x1000, False, pid.value)    # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return ""
+    try:
+        size = wintypes.DWORD(1024)
+        buf = ctypes.create_unicode_buffer(size.value)
+        if not _kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+            return ""
+        return os.path.basename(buf.value).lower()
+    finally:
+        _kernel32.CloseHandle(handle)
+
+
+_UIA_CACHE: list = []
+
+
+def _uia():                                   # pragma: no cover - solo Windows
+    """(IUIAutomation, módulo generado) de UI Automation, creado una sola vez."""
+    if not _UIA_CACHE:
+        import comtypes.client
+        mod = comtypes.client.GetModule("UIAutomationCore.dll")
+        auto = comtypes.client.CreateObject(mod.CUIAutomation, interface=mod.IUIAutomation)
+        _UIA_CACHE.extend([auto, mod])
+    return _UIA_CACHE[0], _UIA_CACHE[1]
+
+
+def _win_browser_url(hwnd: int, exe: str) -> str:    # pragma: no cover - solo Windows
+    """Texto de la barra de direcciones de Chrome/Edge/Brave/Opera/Vivaldi/Firefox."""
+    auto, mod = _uia()
+    root = auto.ElementFromHandle(hwnd)
+    if exe == "firefox.exe":
+        cond = auto.CreatePropertyCondition(mod.UIA_AutomationIdPropertyId, "urlbar-input")
+    else:                                     # Chromium: el primer cuadro de texto es la barra
+        cond = auto.CreatePropertyCondition(mod.UIA_ControlTypePropertyId, mod.UIA_EditControlTypeId)
+    element = root.FindFirst(mod.TreeScope_Descendants, cond)
+    if not element:
+        return ""
+    pattern = element.GetCurrentPattern(mod.UIA_ValuePatternId)
+    if not pattern:
+        return ""
+    return pattern.QueryInterface(mod.IUIAutomationValuePattern).CurrentValue or ""
+
+
+# ── macOS ──────────────────────────────────────────────────
+# AppleScript por navegador (Firefox no lo permite: ahí se usa el título).
+_MAC_SAFARI = {"com.apple.safari", "com.apple.safaritechnologypreview"}
+_MAC_CHROMIUM = {"com.google.chrome", "com.google.chrome.beta", "com.microsoft.edgemac", "com.brave.browser",
+                 "com.vivaldi.vivaldi", "com.operasoftware.opera", "company.thebrowser.browser",
+                 "org.chromium.chromium"}
+_MAC_OTHER_BROWSERS = {"org.mozilla.firefox", "org.mozilla.firefoxdeveloperedition", "app.zen-browser.zen"}
+_MAC_APP_IDS: dict[int, str] = {}             # pid → bundle id (lo llena el atajo)
+
+
+def _mac_bundle_id(pid: int) -> str:          # pragma: no cover - solo macOS
+    if pid in _MAC_APP_IDS:
+        return _MAC_APP_IDS[pid]
+    try:
+        import AppKit
+        app = AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+        return (str(app.bundleIdentifier() or "") if app else "").lower()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _mac_browser_url(bundle_id: str) -> str:  # pragma: no cover - solo macOS
+    if bundle_id in _MAC_SAFARI:
+        script = f'tell application id "{bundle_id}" to get URL of front document'
+    elif bundle_id in _MAC_CHROMIUM:
+        script = f'tell application id "{bundle_id}" to get URL of active tab of front window'
+    else:
+        return ""
+    import subprocess
+    result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=3)
+    if result.returncode != 0:
+        log.info("Auto-escritura: AppleScript no pudo leer la dirección (%s)", result.stderr.strip()[:200])
+        return ""
+    return result.stdout.strip()
+
+
+def mac_accessibility_trusted() -> bool:      # pragma: no cover - solo macOS
+    """¿Tiene CipherVault permiso de Accesibilidad (necesario para el atajo y para escribir)?"""
+    if not IS_MAC:
+        return False
+    try:
+        import ctypes
+        lib = ctypes.cdll.LoadLibrary(
+            "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
+        lib.AXIsProcessTrusted.restype = ctypes.c_bool
+        return bool(lib.AXIsProcessTrusted())
+    except OSError:
+        return False
+
+
+def open_mac_accessibility_settings():        # pragma: no cover - solo macOS
+    import subprocess
+    subprocess.Popen(["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
+
+
+# ── común ──────────────────────────────────────────────────
+def is_browser_window(handle: int) -> bool:
+    """¿La ventana (Windows: hwnd; Mac: pid de la app) es de un navegador?"""
+    try:
+        if os.name == "nt":
+            return _win_process_name(handle) in _WIN_BROWSERS
+        if IS_MAC:
+            bid = _mac_bundle_id(handle)
+            return bid in _MAC_SAFARI or bid in _MAC_CHROMIUM or bid in _MAC_OTHER_BROWSERS
+    except Exception as exc:  # noqa: BLE001
+        log.info("Auto-escritura: no se pudo identificar el programa (%s)", exc)
+    return False
+
+
+def browser_url(handle: int) -> str:
+    """Dirección de la pestaña activa del navegador, o '' si no se puede leer."""
+    try:
+        if os.name == "nt":
+            return _win_browser_url(handle, _win_process_name(handle))
+        if IS_MAC:
+            return _mac_browser_url(_mac_bundle_id(handle))
+    except Exception as exc:  # noqa: BLE001  (sin comtypes, sin permiso, navegador cerrándose...)
+        log.info("Auto-escritura: no se pudo leer la dirección del navegador (%s)", exc)
+    return ""
 
 
 def foreground_window() -> tuple[int, str]:
-    """(handle, título) de la ventana que tiene el foco."""
-    if os.name != "nt":
-        return 0, ""
-    hwnd = _user32.GetForegroundWindow()
-    length = _user32.GetWindowTextLengthW(hwnd)
-    buf = ctypes.create_unicode_buffer(length + 1)
-    _user32.GetWindowTextW(hwnd, buf, length + 1)
-    return int(hwnd or 0), buf.value
+    """(handle, título) de la ventana que tiene el foco. En Mac el handle es el pid."""
+    if os.name == "nt":
+        hwnd = _user32.GetForegroundWindow()
+        length = _user32.GetWindowTextLengthW(hwnd)
+        buf = ctypes.create_unicode_buffer(length + 1)
+        _user32.GetWindowTextW(hwnd, buf, length + 1)
+        return int(hwnd or 0), buf.value
+    if IS_MAC:                                # pragma: no cover - solo macOS
+        try:
+            import AppKit
+            import Quartz
+            app = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
+            pid = int(app.processIdentifier())
+            _MAC_APP_IDS[pid] = str(app.bundleIdentifier() or "").lower()
+            title = ""
+            windows = Quartz.CGWindowListCopyWindowInfo(
+                Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements,
+                Quartz.kCGNullWindowID) or []
+            for info in windows:
+                if int(info.get("kCGWindowOwnerPID", -1)) == pid and int(info.get("kCGWindowLayer", 1)) == 0:
+                    title = str(info.get("kCGWindowName") or "")
+                    break
+            return pid, f"{title} - {app.localizedName()}" if title else str(app.localizedName() or "")
+        except Exception as exc:  # noqa: BLE001
+            log.info("Auto-escritura: no se pudo leer la ventana activa (%s)", exc)
+    return 0, ""
 
 
-def focus_window(hwnd: int) -> bool:
-    if os.name != "nt" or not hwnd:
+def focus_window(handle: int) -> bool:
+    if not handle:
         return False
-    return bool(_user32.SetForegroundWindow(hwnd))
+    if os.name == "nt":
+        return bool(_user32.SetForegroundWindow(handle))
+    if IS_MAC:                                # pragma: no cover - solo macOS
+        try:
+            import AppKit
+            app = AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(handle)
+            if app:
+                app.activateWithOptions_(AppKit.NSApplicationActivateIgnoringOtherApps)
+                time.sleep(0.25)
+                return True
+        except Exception:  # noqa: BLE001
+            return False
+    return False
 
 
 def _wait_modifiers_released(timeout: float = 3.0):
-    """Espera a que el usuario suelte Ctrl/Alt/Shift/Win (si no, el texto se escribiría
-    como atajos de teclado)."""
+    """Espera a que el usuario suelte Ctrl/Alt(Option)/Shift/Win(Cmd); si no, el texto se
+    escribiría como atajos de teclado."""
     end = time.monotonic() + timeout
-    keys = (_VK_SHIFT, _VK_CONTROL, _VK_MENU, _VK_LWIN, _VK_RWIN)
+    if os.name == "nt":
+        keys = (_VK_SHIFT, _VK_CONTROL, _VK_MENU, _VK_LWIN, _VK_RWIN)
+        pressed = lambda: any(_user32.GetAsyncKeyState(k) & 0x8000 for k in keys)  # noqa: E731
+    else:                                     # pragma: no cover - solo macOS
+        import Quartz
+        mask = (Quartz.kCGEventFlagMaskShift | Quartz.kCGEventFlagMaskControl |
+                Quartz.kCGEventFlagMaskAlternate | Quartz.kCGEventFlagMaskCommand)
+        pressed = lambda: bool(Quartz.CGEventSourceFlagsState(  # noqa: E731
+            Quartz.kCGEventSourceStateCombinedSessionState) & mask)
     while time.monotonic() < end:
-        if not any(_user32.GetAsyncKeyState(k) & 0x8000 for k in keys):
+        if not pressed():
             return
         time.sleep(0.03)
 
@@ -474,24 +734,51 @@ def _unicode(text: str) -> list:
     return inputs
 
 
+def _mac_post_key(keycode: int = 0, text: str = "") -> None:   # pragma: no cover - solo macOS
+    import Quartz
+    for down in (True, False):
+        event = Quartz.CGEventCreateKeyboardEvent(None, keycode, down)
+        Quartz.CGEventSetFlags(event, 0)      # sin Ctrl/Option heredados del atajo
+        if text:
+            Quartz.CGEventKeyboardSetUnicodeString(event, len(text.encode("utf-16-le")) // 2, text)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+    time.sleep(0.008)
+
+
 def type_login(username: str, password: str, press_enter: bool = False) -> None:
     """Escribe usuario, TAB y contraseña en la ventana activa (y Enter si se pide)."""
-    if os.name != "nt":
-        raise OSError("La auto-escritura solo funciona en Windows.")
-    _wait_modifiers_released()
-    time.sleep(0.05)
-    if username:
-        _send(_unicode(username))
-        _send(_key(_VK_TAB))
-    _send(_unicode(password))
-    if press_enter:
-        _send(_key(_VK_RETURN))
+    if os.name == "nt":
+        _wait_modifiers_released()
+        time.sleep(0.05)
+        if username:
+            _send(_unicode(username))
+            _send(_key(_VK_TAB))
+        _send(_unicode(password))
+        if press_enter:
+            _send(_key(_VK_RETURN))
+        return
+    if IS_MAC:                                # pragma: no cover - solo macOS
+        if not mac_accessibility_trusted():
+            raise PermissionError("Falta el permiso de Accesibilidad.")
+        _wait_modifiers_released()
+        time.sleep(0.05)
+        if username:
+            for ch in username:
+                _mac_post_key(text=ch)
+            _mac_post_key(48)                 # Tab
+        for ch in password:
+            _mac_post_key(text=ch)
+        if press_enter:
+            _mac_post_key(36)                 # Return
+        return
+    raise OSError("La auto-escritura solo funciona en Windows y macOS.")
 
 
 class HotkeyListener:
-    """Registra el atajo global Ctrl+Alt+A en un hilo propio. Cuando se pulsa, guarda en
-    una cola (handle, título) de la ventana activa; la interfaz la lee con poll() desde
-    el hilo de Tk (Tk no es seguro entre hilos)."""
+    """Atajo global (Ctrl+Alt+A en Windows, Ctrl+Option+A en Mac). Cuando se pulsa guarda en
+    una cola (handle, título) de la ventana activa; la interfaz la lee con poll() desde el hilo
+    de Tk. Windows: RegisterHotKey en un hilo propio. Mac: monitor global de NSEvent en el hilo
+    principal (el bucle de Tk es el de Cocoa); necesita permiso de Accesibilidad."""
     HOTKEY_ID = 0xC1F0
 
     def __init__(self):
@@ -499,15 +786,20 @@ class HotkeyListener:
         self._thread: threading.Thread | None = None
         self._thread_id = 0
         self._ready = threading.Event()
+        self._monitor = None
         self.error = ""
 
     @property
     def running(self) -> bool:
+        if IS_MAC:
+            return self._monitor is not None and not self.error
         return bool(self._thread and self._thread.is_alive() and not self.error)
 
     def start(self) -> bool:
+        if IS_MAC:
+            return self._start_mac()
         if os.name != "nt":
-            self.error = "Solo disponible en Windows."
+            self.error = "Solo disponible en Windows y macOS."
             return False
         if self.running:
             return True
@@ -517,6 +809,34 @@ class HotkeyListener:
         self._thread.start()
         self._ready.wait(2)
         return self.running
+
+    def _start_mac(self) -> bool:             # pragma: no cover - solo macOS
+        if self._monitor is not None:
+            self.error = "" if mac_accessibility_trusted() else self.error
+            return True
+        try:
+            import AppKit
+        except ImportError:
+            self.error = "Falta el componente de macOS (pyobjc) en esta instalación."
+            return False
+        self.error = "" if mac_accessibility_trusted() else (
+            "Falta el permiso de Accesibilidad: Ajustes del Sistema → Privacidad y seguridad → "
+            "Accesibilidad → activa CipherVault y vuelve a abrir la app.")
+        wanted = AppKit.NSEventModifierFlagControl | AppKit.NSEventModifierFlagOption
+        others = AppKit.NSEventModifierFlagCommand | AppKit.NSEventModifierFlagShift
+
+        def handler(event):
+            try:
+                flags = int(event.modifierFlags())
+                key = str(event.charactersIgnoringModifiers() or "").lower()
+                if (flags & wanted) == wanted and not (flags & others) and (key == "a" or event.keyCode() == 0):
+                    self.events.put(foreground_window())
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Auto-escritura: error en el atajo (%s)", exc)
+        self._handler = handler               # el bloque debe seguir vivo
+        self._monitor = AppKit.NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
+            AppKit.NSEventMaskKeyDown, handler)
+        return self._monitor is not None
 
     def _run(self):                                       # pragma: no cover - solo Windows
         self._thread_id = _kernel32.GetCurrentThreadId()
@@ -535,6 +855,12 @@ class HotkeyListener:
             _user32.UnregisterHotKey(None, self.HOTKEY_ID)
 
     def stop(self):
+        if IS_MAC:
+            if self._monitor is not None:     # pragma: no cover - solo macOS
+                import AppKit
+                AppKit.NSEvent.removeMonitor_(self._monitor)
+            self._monitor = None
+            return
         if os.name == "nt" and self._thread and self._thread.is_alive() and self._thread_id:
             _user32.PostThreadMessageW(self._thread_id, _WM_QUIT, 0, 0)
             self._thread.join(1)

@@ -306,12 +306,13 @@ def test_dialogo_pide_email_si_la_cuenta_no_tiene(ui, monkeypatch):
     app.current_user["email"] = ""
     app._activate_license_dialog()
     app.root.update()
-    win = [c for c in app.root.winfo_children() if isinstance(c, tk.Toplevel)][-1]
 
     def walk(w):
         for c in w.winfo_children():
             yield c
             yield from walk(c)
+    # Ya no es una ventana flotante: es una pantalla dentro de la app.
+    win = [c for c in walk(app.root) if isinstance(c, gcs.InlinePage)][-1]
     entries = [w for w in walk(win) if w.winfo_class() == "TEntry"]
     assert len(entries) == 2                    # código + email
     entries[0].insert(0, code)
@@ -322,3 +323,52 @@ def test_dialogo_pide_email_si_la_cuenta_no_tiene(ui, monkeypatch):
     assert app.user_version == "premium"
     with gcs.db() as conn:
         assert gcs.get_user_by_name(conn, "ana")["email"] == "ana@example.com"
+
+
+# ── pantallas dentro de la app (ya no ventanas flotantes) ───────────
+def _walk(w):
+    for c in w.winfo_children():
+        yield c
+        yield from _walk(c)
+
+
+def test_planes_y_licencia_se_abren_dentro_de_la_app(ui):
+    app = ui
+    register_and_login(app)
+    tops_before = [c for c in app.root.winfo_children() if isinstance(c, tk.Toplevel)]
+    for opener in (app._show_plans_screen, app._show_license_info, app._activate_license_dialog):
+        opener()
+        app.root.update()
+        pages = [c for c in _walk(app.root) if isinstance(c, gcs.InlinePage)]
+        assert pages, opener.__name__
+        assert [c for c in app.root.winfo_children() if isinstance(c, tk.Toplevel)] == tops_before
+        pages[-1].destroy()
+        app.root.update()
+        assert not [c for c in _walk(app.root) if isinstance(c, gcs.InlinePage)]
+
+
+def test_duplicar_contrasena(ui, monkeypatch):
+    app = ui
+    register_and_login(app)
+    monkeypatch.setattr(app, "_ask_master", lambda: True)
+    monkeypatch.setattr(gcs.messagebox, "showinfo", lambda *a, **k: None)
+    app._show_add_form()
+    app.add_service.set("Netflix")
+    app.add_uname.set("ana@example.com")
+    app.add_url.set("https://www.netflix.com/login")
+    app.add_pwd.set("Clave-Segura-123!")
+    app.add_notes.insert("1.0", "perfil familiar")
+    app._save_password()
+    with gcs.db() as conn:
+        pid = conn.execute("SELECT id FROM passwords").fetchone()[0]
+    app.selected_password_id = pid
+    app._duplicate_password()
+    assert app.add_service.get() == "Netflix (copia)"
+    assert app.add_uname.get() == "ana@example.com"
+    assert app.add_pwd.get() == "Clave-Segura-123!"
+    assert app.add_url.get() == "https://www.netflix.com/login"
+    assert app.add_notes.get("1.0", "end-1c") == "perfil familiar"
+    app.add_uname.set("otra@example.com")
+    app._save_password()
+    with gcs.db() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM passwords").fetchone()[0] == 2

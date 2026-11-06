@@ -1273,6 +1273,113 @@ C = {
 # ══════════════════════════════════════════════
 #  APLICACIÓN PRINCIPAL
 # ══════════════════════════════════════════════
+class InlinePage(tk.Frame):
+    """Pantalla dentro de la ventana principal que reemplaza a las antiguas ventanas
+    flotantes (planes, licencia, detalles, editar, equipo...). Se dibuja encima del área de
+    contenido con una barra «← Volver» y desplazamiento vertical, y acepta las mismas
+    llamadas que un Toplevel (title, transient, grab_set... no hacen nada) para que el
+    código que la llena no cambie. `destroy()` la cierra y deja ver lo que había debajo."""
+
+    def __init__(self, app: "CipherVaultApp", host: tk.Misc):
+        self._app = app
+        self._closing = False
+        self._on_close = None
+        outer = tk.Frame(host, bg=C["bg"])
+        outer.place(relx=0, rely=0, relwidth=1, relheight=1)
+        outer.lift()
+        self._outer = outer
+        bar = tk.Frame(outer, bg=C["bg"])
+        bar.pack(fill="x", pady=(0, 6))
+        app._btn(bar, "← Volver", self._back).pack(side="left")
+        self._title_lbl = tk.Label(bar, text="", bg=C["bg"], fg=C["muted"], font=("Segoe UI", 11, "bold"))
+        self._title_lbl.pack(side="left", padx=12)
+        self._canvas = tk.Canvas(outer, bg=C["bg"], highlightthickness=0, bd=0)
+        self._scroll = ttk.Scrollbar(outer, orient="vertical", command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=self._scroll.set)
+        self._canvas.pack(side="left", fill="both", expand=True)
+        super().__init__(self._canvas, bg=C["bg"])
+        self._item = self._canvas.create_window(0, 0, window=self, anchor="nw")
+        self._canvas.bind("<Configure>", self._fit, "+")
+        tk.Frame.bind(self, "<Configure>", self._fit, "+")
+        outer.bind("<Enter>", lambda _e: self._wheel(True))
+        outer.bind("<Leave>", lambda _e: self._wheel(False))
+
+    def _fit(self, _event=None):
+        """Ajusta el ancho al área visible y muestra la barra solo si el contenido no cabe."""
+        try:
+            self._canvas.itemconfigure(self._item, width=self._canvas.winfo_width())
+            self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+            needs = self.winfo_reqheight() > self._canvas.winfo_height() > 1
+            if needs and not self._scroll.winfo_ismapped():
+                self._scroll.pack(side="right", fill="y", before=self._canvas)
+            elif not needs and self._scroll.winfo_ismapped():
+                self._scroll.pack_forget()
+                self._canvas.yview_moveto(0)
+        except tk.TclError:
+            pass
+
+    # ── desplazamiento con la rueda (Windows, macOS y Linux) ──
+    def _wheel(self, on: bool):
+        try:
+            if on:
+                self.bind_all("<MouseWheel>", self._on_wheel)
+                self.bind_all("<Button-4>", lambda _e: self._canvas.yview_scroll(-1, "units"))
+                self.bind_all("<Button-5>", lambda _e: self._canvas.yview_scroll(1, "units"))
+            else:
+                for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                    self.unbind_all(seq)
+        except tk.TclError:
+            pass
+
+    def _on_wheel(self, event):
+        if self._canvas.winfo_height() >= self.winfo_reqheight():
+            return
+        delta = event.delta if sys.platform == "darwin" else event.delta / 120
+        self._canvas.yview_scroll(int(-delta) or (-1 if event.delta > 0 else 1), "units")
+
+    def _back(self):
+        if self._on_close:
+            self._on_close()
+        else:
+            self.destroy()
+
+    # ── API compatible con Toplevel ──
+    def title(self, text: str = ""):
+        self._title_lbl.config(text=text)
+
+    def protocol(self, name=None, func=None):
+        if name == "WM_DELETE_WINDOW" and func:
+            self._on_close = func
+
+    def transient(self, *_a, **_k):
+        pass
+
+    def grab_set(self, *_a, **_k):
+        pass
+
+    def attributes(self, *_a, **_k):
+        pass
+
+    def resizable(self, *_a, **_k):
+        pass
+
+    def geometry(self, *_a, **_k):
+        pass
+
+    def minsize(self, *_a, **_k):
+        pass
+
+    def destroy(self):
+        if self._closing:
+            return tk.Frame.destroy(self)
+        self._closing = True
+        self._wheel(False)
+        try:
+            self._outer.destroy()          # destruye también esta página (es hija del lienzo)
+        except tk.TclError:
+            pass
+
+
 class CipherVaultApp:
     """
     Aplicación de escritorio (Tkinter) de CipherVault.
@@ -1402,8 +1509,21 @@ class CipherVaultApp:
         """Convierte una medida diseñada para 1600×900 a la pantalla actual."""
         return max(1, round(value * self.ui_scale))
 
+    def _inline_page(self) -> "InlinePage":
+        """Pantalla dentro de la app (en lugar de una ventana flotante): sobre el área de
+        contenido si la sesión está abierta, o sobre toda la ventana (inicio de sesión)."""
+        host = getattr(self, "content_frame", None)
+        try:
+            if not (host is not None and self.current_user and host.winfo_exists()):
+                host = self.root
+        except tk.TclError:
+            host = self.root
+        return InlinePage(self, host)
+
     def _set_popup_geometry(self, window: tk.Toplevel, width: int, height: int):
         """Centra una ventana flotante sin que exceda la pantalla disponible."""
+        if isinstance(window, InlinePage):
+            return
         margin = self._s(32)
         popup_w = min(self._s(width), self.screen_width - margin * 2)
         popup_h = min(self._s(height), self.screen_height - margin * 2)
@@ -2296,7 +2416,7 @@ class CipherVaultApp:
             return
         user_email = self.current_user.get("email", "")
 
-        win = tk.Toplevel(self.root)
+        win = self._inline_page()
         win.title("🔑 Activar licencia")
         self._set_popup_geometry(win, 520, 380)
         win.configure(bg=C["bg"])
@@ -2810,13 +2930,16 @@ class CipherVaultApp:
         self._action_row.pack(fill="x", pady=(8, 0))
         self._btn(self._action_row, "👁️ Ver detalles", self._show_pwd_details).pack(side="left", padx=4)
         self._btn(self._action_row, "✏️ Editar",       self._edit_password).pack(side="left", padx=4)
+        self._btn(self._action_row, "📄 Duplicar",     self._duplicate_password).pack(side="left", padx=4)
         self._btn(self._action_row, "🗑️ Eliminar",     self._delete_password, "Danger.TButton").pack(side="left", padx=4)
 
     # ─────────────────────────────────────────
     #  FORMULARIO AGREGAR CONTRASEÑA
     # ─────────────────────────────────────────
-    def _show_add_form(self, prefill_password=""):
-        """Muestra el formulario para agregar una contraseña nueva, respetando el límite máximo de contraseñas del plan actual."""
+    def _show_add_form(self, prefill_password="", prefill: dict | None = None):
+        """Muestra el formulario para agregar una contraseña nueva, respetando el límite máximo
+        de contraseñas del plan actual. `prefill` (al duplicar) trae los datos de otra entrada."""
+        prefill = prefill or {}
         feats = get_features(self.user_version)
         mp = feats["max_passwords"]
         if mp != -1:
@@ -2829,24 +2952,29 @@ class CipherVaultApp:
 
         self._clear_content()
         f = self.content_frame
-        self._label(f, "➕ Agregar contraseña", font_size=20, bold=True).pack(anchor="w", pady=(0, 16))
+        self._label(f, "📄 Duplicar contraseña" if prefill else "➕ Agregar contraseña",
+                    font_size=20, bold=True).pack(anchor="w", pady=(0, 4 if prefill else 16))
+        if prefill:
+            self._label(f, "Es una copia nueva: cambia lo que necesites (por ejemplo el usuario) y guárdala. "
+                           "La original no se modifica.", color=C["muted"], font_size=10
+                        ).pack(anchor="w", pady=(0, 12))
 
         form = self._card(f, padx=28, pady=24)
         form.pack(fill="x")
 
         self._label(form, "Servicio / Sitio web:", bold=True, color=C["muted"]).grid(row=0, column=0, sticky="w", pady=6)
-        self.add_service  = tk.StringVar()
+        self.add_service  = tk.StringVar(value=prefill.get("service", ""))
         ttk.Entry(form, textvariable=self.add_service, width=40).grid(row=0, column=1, padx=12, pady=6)
 
         self._label(form, "Usuario / Email:", bold=True, color=C["muted"]).grid(row=2, column=0, sticky="w", pady=6)
-        self.add_uname = tk.StringVar()
+        self.add_uname = tk.StringVar(value=prefill.get("username", ""))
         ttk.Entry(form, textvariable=self.add_uname, width=40).grid(row=2, column=1, padx=12, pady=6)
 
         self._label(form, "Página web (opcional):", bold=True, color=C["muted"]).grid(row=1, column=0, sticky="w", pady=6)
-        self.add_url = tk.StringVar()
+        self.add_url = tk.StringVar(value=prefill.get("url", ""))
         ttk.Entry(form, textvariable=self.add_url, width=40).grid(row=1, column=1, padx=12, pady=6)
 
-        self.add_totp = tk.StringVar()
+        self.add_totp = tk.StringVar(value=prefill.get("totp", "") if feats.get("totp") else "")
         if feats.get("totp"):
             self._label(form, "Clave 2FA (opcional):", bold=True, color=C["muted"]).grid(row=6, column=0, sticky="w", pady=6)
             ttk.Entry(form, textvariable=self.add_totp, width=40).grid(row=6, column=1, padx=12, pady=6)
@@ -2858,7 +2986,7 @@ class CipherVaultApp:
         self._label(form, "Contraseña:", bold=True, color=C["muted"]).grid(row=3, column=0, sticky="w", pady=6)
         pwd_row = tk.Frame(form, bg=C["card"])
         pwd_row.grid(row=3, column=1, padx=12, pady=6, sticky="w")
-        self.add_pwd = tk.StringVar(value=prefill_password)
+        self.add_pwd = tk.StringVar(value=prefill.get("password", prefill_password))
         self.add_pwd_entry = ttk.Entry(pwd_row, textvariable=self.add_pwd, show="•", width=30)
         self.add_pwd_entry.pack(side="left")
         self._btn(pwd_row, "👁️", lambda: self._toggle_vis(self.add_pwd_entry)).pack(side="left", padx=4)
@@ -2866,7 +2994,7 @@ class CipherVaultApp:
 
         if feats["categories"]:
             self._label(form, "Categoría:", bold=True, color=C["muted"]).grid(row=4, column=0, sticky="w", pady=6)
-            self.add_cat = tk.StringVar(value="General")
+            self.add_cat = tk.StringVar(value=prefill.get("category") or "General")
             ttk.Combobox(form, textvariable=self.add_cat, width=37,
                          values=["General","Trabajo","Personal","Finanzas","Redes Sociales","Correo"],
                          state="readonly").grid(row=4, column=1, padx=12, pady=6)
@@ -2875,6 +3003,8 @@ class CipherVaultApp:
         self.add_notes = tk.Text(form, height=4, width=40,
                                  bg=C["card2"], fg=C["text"], font=("Segoe UI", 10))
         self.add_notes.grid(row=5, column=1, padx=12, pady=6)
+        if prefill.get("notes"):
+            self.add_notes.insert("1.0", prefill["notes"][:feats["notes_max_length"]])
 
         btn_row = tk.Frame(form, bg=C["card"])
         btn_row.grid(row=8, column=0, columnspan=2, pady=20)
@@ -3002,7 +3132,7 @@ class CipherVaultApp:
         if not d:
             return
 
-        win = tk.Toplevel(self.root)
+        win = self._inline_page()
         win.title(f"🔐 {d['service']}")
         self._set_popup_geometry(win, 560, 560)
         win.configure(bg=C["bg"])
@@ -3093,6 +3223,22 @@ class CipherVaultApp:
 
         self._btn(win, "↩️ Cerrar", win.destroy).pack(pady=8)
 
+    def _duplicate_password(self):
+        """Abre el formulario de agregar con los datos de la entrada seleccionada (servicio con
+        «(copia)», mismo usuario, contraseña, página, notas, categoría y 2FA) para guardarla
+        como una entrada nueva. Útil para otra cuenta del mismo sitio."""
+        if not self.selected_password_id:
+            messagebox.showwarning("Sin selección", "Selecciona una contraseña.")
+            return
+        if not self._ask_master():
+            return
+        d = self._get_pwd_data()
+        if not d:
+            return
+        d = dict(d)
+        d["service"] = f"{d['service']} (copia)"[:200]
+        self._show_add_form(prefill=d)
+
     def _edit_password(self):
         """Abre un formulario para editar una contraseña existente y guarda los cambios ya cifrados."""
         if not self.selected_password_id:
@@ -3104,7 +3250,7 @@ class CipherVaultApp:
         if not d:
             return
 
-        win = tk.Toplevel(self.root)
+        win = self._inline_page()
         win.title(f"✏️ Editar: {d['service']}")
         self._set_popup_geometry(win, 560, 600)
         win.configure(bg=C["bg"])
@@ -3354,7 +3500,7 @@ class CipherVaultApp:
             self._show_wompi_checkout(preselect)
             return
 
-        win = tk.Toplevel(self.root)
+        win = self._inline_page()
         win.title("Planes CipherVault")
         self._set_popup_geometry(win, 980, 720)
         win.configure(bg=C["bg"])
@@ -3464,7 +3610,8 @@ class CipherVaultApp:
             options.append((key, f"{plan['nombre'].split('· ')[1]} — {price}/mes{per_user}"))
         key = self._choose("Plan Equipo", "Un solo pago mensual de la empresa; te llegan por correo los códigos "
                                           "para repartir. Incluye Premium para cada persona, bóveda compartida "
-                                          "con roles, registro de actividad e informe de seguridad.", options)
+                                          "con roles, registro de actividad e informe de seguridad.", options,
+                           inline=True)
         if key:
             self._show_wompi_checkout(key)
 
@@ -3485,7 +3632,7 @@ class CipherVaultApp:
 
         WompiHelper.open_checkout(plan_key)
 
-        win = tk.Toplevel(self.root)
+        win = self._inline_page()
         win.title("💳 Pago en proceso")
         self._set_popup_geometry(win, 600, 580)
         win.configure(bg=C["bg"])
@@ -3555,7 +3702,7 @@ class CipherVaultApp:
     # ─────────────────────────────────────────
     def _show_license_info(self):
         """Muestra en una ventana emergente el estado actual de la licencia: usuario, email, plan, vigencia y tipo de cuenta."""
-        win = tk.Toplevel(self.root)
+        win = self._inline_page()
         win.title("📜 Mi licencia")
         self._set_popup_geometry(win, 480, 360)
         win.configure(bg=C["bg"])
@@ -3678,13 +3825,16 @@ class CipherVaultApp:
             else:
                 self._btn(sec, "🪟 Activar Windows Hello", self._enable_hello).pack(anchor="w")
 
-            # auto-escritura
+        # auto-escritura (Windows y macOS)
+        if IS_WINDOWS or sys.platform == "darwin":
             auto = self._card(extra_row, padx=24, pady=16)
             auto.pack(side="left", fill="both", expand=True, padx=(0, 6))
             self._label(auto, f"Auto-escritura ({cvx.AUTOTYPE_HOTKEY_LABEL})", bold=True).pack(anchor="w")
             self._label(auto, "Abre la página de inicio de sesión, haz clic en el campo de usuario y pulsa "
                               f"{cvx.AUTOTYPE_HOTKEY_LABEL}: CipherVault escribe tu usuario y contraseña. "
-                              "Reconoce el sitio por el título de la ventana (servicio o página web guardados).",
+                              "En el navegador reconoce el sitio por la dirección de la página (la página "
+                              "web guardada o, si no la tiene, el nombre del servicio); en otros programas, "
+                              "por el título de la ventana.",
                         color=C["muted"], font_size=9, wraplength=self._s(440), justify="left"
                         ).pack(anchor="w", pady=(4, 8))
             self.settings_autotype = tk.BooleanVar(value=bool(self.config.get("autotype_enabled", True)))
@@ -3697,7 +3847,11 @@ class CipherVaultApp:
                                command=self._save_autotype_settings).pack(anchor="w")
             hotkey = getattr(self, "_hotkey", None)
             if hotkey and hotkey.error:
-                self._label(auto, f"⚠️ {hotkey.error}", color=C["warning"], font_size=9).pack(anchor="w", pady=(6, 0))
+                self._label(auto, f"⚠️ {hotkey.error}", color=C["warning"], font_size=9,
+                            wraplength=self._s(440), justify="left").pack(anchor="w", pady=(6, 0))
+            if sys.platform == "darwin" and not cvx.mac_accessibility_trusted():
+                self._btn(auto, "Abrir ajustes de Accesibilidad",
+                          cvx.open_mac_accessibility_settings).pack(anchor="w", pady=(6, 0))
 
         # info versión
         if feats.get("sync"):
@@ -3847,9 +4001,11 @@ class CipherVaultApp:
         """Deja solo letras, números, punto, guion y guion bajo (para nombres de archivo)."""
         return re.sub(r"[^A-Za-z0-9_.\-]", "_", text or "") or "usuario"
 
-    def _choose(self, title: str, message: str, options: list[tuple[str, str]]) -> str | None:
-        """Ventana modal con una opción por botón. Devuelve la clave elegida o None."""
-        win = tk.Toplevel(self.root)
+    def _choose(self, title: str, message: str, options: list[tuple[str, str]],
+                inline: bool = False) -> str | None:
+        """Una opción por botón; devuelve la clave elegida o None. Por defecto es una ventanita
+        de pregunta; con `inline=True` se muestra como pantalla dentro de la app."""
+        win = self._inline_page() if inline else tk.Toplevel(self.root)
         win.title(title)
         win.configure(bg=C["bg"])
         win.transient(self.root)
@@ -4188,7 +4344,7 @@ class CipherVaultApp:
         Activa una licencia directamente en la DB (modo desarrollador).
         Útil para activar sin pasar por el flujo de Wompi/Make.
         """
-        win = tk.Toplevel(self.root)
+        win = self._inline_page()
         win.title("🔑 Activar licencia — Dev")
         self._set_popup_geometry(win, 480, 400)
         win.configure(bg=C["bg"])
@@ -4268,7 +4424,7 @@ class CipherVaultApp:
     # ─────────────────────────────────────────
     def _show_dev_panel(self):
         """Muestra información técnica del equipo y accesos rápidos para iniciar sesión como developer o configurar sus credenciales."""
-        win = tk.Toplevel(self.root)
+        win = self._inline_page()
         win.title("⚙️ Dev Panel")
         self._set_popup_geometry(win, 560, 480)
         win.configure(bg=C["bg"])
@@ -4311,7 +4467,7 @@ class CipherVaultApp:
         """Formulario para elegir el usuario/contraseña de la cuenta developer,
         sin tener que tocar el .env a mano. Se guarda en un archivo local
         (dev_credentials.json) que nunca se versiona ni se distribuye."""
-        win = tk.Toplevel(self.root)
+        win = self._inline_page()
         win.title("👤 Usuario/clave de Developer")
         self._set_popup_geometry(win, 420, 360)
         win.configure(bg=C["bg"])
@@ -4484,7 +4640,7 @@ class CipherVaultApp:
                 pass
 
     # ─────────────────────────────────────────
-    #  AUTO-ESCRITURA (Ctrl + Alt + A)
+    #  AUTO-ESCRITURA (Ctrl + Alt + A en Windows, Ctrl + Option + A en Mac)
     # ─────────────────────────────────────────
     def _start_autotype(self):
         """Registra el atajo global si está activado en la configuración (solo Windows)."""
@@ -4543,18 +4699,27 @@ class CipherVaultApp:
             return None
 
     def _on_autotype(self, hwnd: int, title: str):
-        """Se pulsó Ctrl+Alt+A sobre la ventana `title`: busca la contraseña que corresponde
-        y la escribe. Si hay varias, deja elegir; si la sesión está bloqueada, solo avisa."""
+        """Se pulsó el atajo (Ctrl+Alt+A / Ctrl+Option+A) sobre la ventana `title`: busca la
+        contraseña que corresponde y la escribe. Si hay varias, deja elegir; si la sesión está bloqueada, solo avisa."""
         if title.startswith("🔒 CipherVault"):
             return
         if not self.current_user:
             self._toast("CipherVault está bloqueado. Inicia sesión y vuelve a pulsar "
                         f"{cvx.AUTOTYPE_HOTKEY_LABEL}.")
             return
-        matches = cvx.match_entries(title, self._autotype_entries())
+        entries = self._autotype_entries()
+        page_url = cvx.browser_url(hwnd) if cvx.is_browser_window(hwnd) else ""
+        if page_url and cvx._page_host(page_url):
+            # Navegador: manda la dirección real de la pestaña (no el título, que una página
+            # falsa puede copiar).
+            matches = cvx.match_entries_by_url(page_url, entries)
+            where = cvx._page_host(page_url)
+        else:
+            matches = cvx.match_entries(title, entries)
+            where = title[:60]
         if not matches:
-            self._toast(f"No hay ninguna contraseña para «{title[:60]}».\n"
-                        "Guárdala con la página web del sitio para usar el atajo.")
+            self._toast(f"No hay ninguna contraseña para «{where}».\n"
+                        "Guárdala con la página web del sitio (o el nombre del sitio) para usar el atajo.")
             return
         if len(matches) == 1:
             self._autotype_entry(matches[0]["id"], hwnd)
@@ -4591,7 +4756,11 @@ class CipherVaultApp:
         press_enter = bool(self.config.get("autotype_enter", False))
 
         def done(_result, error):
-            if error:
+            if error and sys.platform == "darwin":
+                log.warning("Auto-escritura falló: %s", error)
+                self._toast("macOS no dejó escribir: da permiso a CipherVault en Ajustes del Sistema → "
+                            "Privacidad y seguridad → Accesibilidad, y vuelve a abrir la app.")
+            elif error:
                 log.warning("Auto-escritura falló: %s", error)
                 self._toast("Windows no dejó escribir en esa ventana (si es un programa abierto como "
                             "administrador, abre CipherVault también como administrador).")
@@ -5084,7 +5253,7 @@ class CipherVaultApp:
         entry = self._team_selected()
         if not entry:
             return
-        win = tk.Toplevel(self.root)
+        win = self._inline_page()
         win.title(f"👥 {entry['service']}")
         self._set_popup_geometry(win, 540, 440)
         win.configure(bg=C["bg"])
@@ -5124,7 +5293,7 @@ class CipherVaultApp:
         if not team:
             return
         data = dict(entry or {})
-        win = tk.Toplevel(self.root)
+        win = self._inline_page()
         win.title("Entrada del equipo")
         self._set_popup_geometry(win, 560, 560)
         win.configure(bg=C["bg"])
@@ -5211,7 +5380,7 @@ class CipherVaultApp:
             team = self._team = team.refresh(self._team_keys()[0])
         except (cvs.SyncError, OSError):
             pass
-        win = tk.Toplevel(self.root)
+        win = self._inline_page()
         win.title("Actividad del equipo")
         self._set_popup_geometry(win, 820, 560)
         win.configure(bg=C["bg"])
@@ -5247,7 +5416,7 @@ class CipherVaultApp:
         if not team or not team.is_admin:
             return
         rep = cvs.security_report(team.entries, lambda pwd: evaluate_strength(pwd)[0])
-        win = tk.Toplevel(self.root)
+        win = self._inline_page()
         win.title("Informe de seguridad del equipo")
         self._set_popup_geometry(win, 720, 600)
         win.configure(bg=C["bg"])
@@ -5278,7 +5447,7 @@ class CipherVaultApp:
         team = getattr(self, "_team", None)
         if not team or not team.is_admin:
             return
-        win = tk.Toplevel(self.root)
+        win = self._inline_page()
         win.title("Miembros del equipo")
         self._set_popup_geometry(win, 720, 520)
         win.configure(bg=C["bg"])

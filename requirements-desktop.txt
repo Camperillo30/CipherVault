@@ -6,3 +6,8 @@ winrt-Windows.Foundation>=3.2,<4; sys_platform == "win32"
 winrt-Windows.Security.Credentials>=3.2,<4; sys_platform == "win32"
 winrt-Windows.Security.Cryptography>=3.2,<4; sys_platform == "win32"
 winrt-Windows.Storage.Streams>=3.2,<4; sys_platform == "win32"
+# Auto-escritura: leer la dirección de la pestaña del navegador en Windows (UI Automation)
+comtypes>=1.4,<2; sys_platform == "win32"
+# Auto-escritura en macOS (atajo global, ventana activa y escritura de teclas)
+pyobjc-framework-Cocoa>=10,<13; sys_platform == "darwin"
+pyobjc-framework-Quartz>=10,<13; sys_platform == "darwin"

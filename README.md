@@ -35,7 +35,7 @@ CipherVault todavía no tiene firma de código, así que SmartScreen muestra ese
 2. Ábrelo una vez (aparecerá el aviso) y ciérralo.
 3. Ve a **Ajustes del Sistema → Privacidad y seguridad**, baja hasta el mensaje de CipherVault y pulsa **Abrir de todas formas**.
 
-En Mac no están la auto-escritura (Ctrl + Alt + A) ni Windows Hello; todo lo demás funciona igual (bóveda, 2FA, sincronización, equipo, importar CSV).
+En Mac no está Windows Hello; todo lo demás funciona igual (bóveda, 2FA, sincronización, equipo, importar CSV). La auto-escritura usa **Ctrl + Option + A** y necesita dos permisos que macOS pide la primera vez: **Accesibilidad** (Ajustes del Sistema → Privacidad y seguridad → Accesibilidad → activar CipherVault y volver a abrir la app) y **Automatización** para leer la dirección de Safari, Chrome, Edge o Brave.
 </details>
 
 ![Panel principal de CipherVault](docs/captura-inicio.png)
@@ -43,7 +43,8 @@ En Mac no están la auto-escritura (Ctrl + Alt + A) ni Windows Hello; todo lo de
 ## Funciones
 
 - **Bóveda cifrada.** Servicio, página web, usuario, contraseña, notas y clave 2FA se guardan cifrados con una clave que se deriva de la contraseña maestra y nunca se guarda en disco.
-- **Auto-escritura (Ctrl + Alt + A).** En la página de inicio de sesión, CipherVault reconoce el sitio por el título de la ventana y escribe usuario y contraseña. Si hay varias cuentas, deja elegir.
+- **Auto-escritura (Ctrl + Alt + A en Windows, Ctrl + Option + A en Mac).** En la página de inicio de sesión, CipherVault lee la dirección de la pestaña del navegador y la compara con el dominio de la página web guardada (o, si la entrada no tiene página, con el nombre del servicio: «Netflix» sirve en netflix.com). Una página falsa que copie el título no coincide. En programas que no son navegador usa el título de la ventana. Si hay varias cuentas, deja elegir.
+- **Duplicar contraseña.** Crea una entrada nueva con los datos de otra (por ejemplo, una segunda cuenta del mismo sitio) para cambiar solo lo necesario.
 - **Windows Hello.** Entrar con huella, rostro o PIN de Windows en vez de escribir la contraseña maestra.
 - **Códigos 2FA (TOTP).** Guarda la clave de verificación en dos pasos y muestra el código de 6 dígitos con su cuenta regresiva.
 - **Importar desde Chrome, Edge, Firefox, Bitwarden, LastPass, 1Password, KeePass y Apple** (CSV), y exportar a CSV o a `.cvault` cifrado.

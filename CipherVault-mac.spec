@@ -34,6 +34,8 @@ a = Analysis(
         'tkinter', 'tkinter.ttk', 'tkinter.messagebox', 'tkinter.simpledialog', 'tkinter.filedialog',
         'sqlite3', 'logging.handlers',
         'cv_extras', 'cv_sync',
+        # Auto-escritura (pyobjc): atajo global, ventana activa y teclas
+        'AppKit', 'Foundation', 'Quartz', 'objc',
     ],
     hookspath=[],
     hooksconfig={},
@@ -75,6 +77,9 @@ app = BUNDLE(
         'CFBundleVersion': APP_VERSION,
         'NSHighResolutionCapable': True,
         'LSMinimumSystemVersion': '11.0',
+        # Auto-escritura: leer la dirección de la pestaña de Safari/Chrome/Edge/Brave con AppleScript
+        'NSAppleEventsUsageDescription': 'CipherVault lee la dirección de la página abierta para '
+                                         'saber qué usuario y contraseña escribir con Ctrl + Option + A.',
         'NSHumanReadableCopyright': '© 2026 S.C.A - CipherVault. Todos los derechos reservados.',
     },
 )

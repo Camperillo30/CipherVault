@@ -48,6 +48,8 @@ a = Analysis(
         'winreg',
         'cv_extras',
         'cv_sync',
+        # Auto-escritura: UI Automation para leer la barra de direcciones del navegador
+        'comtypes', 'comtypes.client', 'comtypes.stream',
         # Windows Hello (paquetes winrt; si no están instalados PyInstaller los ignora)
         'winrt.system',
         'winrt.runtime',
