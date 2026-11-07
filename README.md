@@ -18,8 +18,10 @@
 <p align="center">
   <a href="https://github.com/Camperillo30/CipherVault/releases/download/v3.3.0-beta/CipherVault-Setup.exe"><b>⬇️ Descargar para Windows</b></a> (Windows 10 y 11)
   &nbsp;·&nbsp;
+  <a href="https://github.com/Camperillo30/CipherVault/releases/download/v3.3.0-beta/CipherVault-portable.exe"><b>⬇️ Windows portable</b></a> (sin instalar)
+  &nbsp;·&nbsp;
   <a href="https://github.com/Camperillo30/CipherVault/releases/download/v3.3.0-beta/CipherVault-macOS.zip"><b>⬇️ Descargar para Mac</b></a> (macOS 11 o superior, chip Apple M1 o más nuevo)
-  <br><sub><a href="https://github.com/Camperillo30/CipherVault/releases">Todas las versiones</a></sub>
+  <br><sub>Versión 3.3.0-beta · <a href="https://github.com/Camperillo30/CipherVault/releases">Todas las versiones</a></sub>
 </p>
 
 <details>
