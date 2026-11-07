@@ -284,3 +284,90 @@ def test_elegir_paquete_de_equipo(ui, monkeypatch):
     for child in app.root.winfo_children():
         if isinstance(child, tk.Toplevel):
             child.destroy()
+
+
+# ── verificación en dos pasos al iniciar sesión ──────────────
+def test_totp_de_inicio_de_sesion():
+    secret = cvx.new_login_secret()
+    cfg = {"secret": secret, "digits": 6, "period": 30, "algorithm": "SHA1"}
+    now = 1_800_000_000
+    code, _ = cvx.totp_code(cfg, at=now)
+    counter = cvx.verify_login_totp(secret, code, at=now)
+    assert counter == now // 30
+    assert cvx.verify_login_totp(secret, code, last_counter=counter, at=now) is None   # no se repite
+    assert cvx.verify_login_totp(secret, code, at=now + 30) == counter                 # reloj desfasado
+    assert cvx.verify_login_totp(secret, code, at=now + 120) is None
+    assert cvx.verify_login_totp(secret, "12345", at=now) is None
+    assert "secret=" + secret in cvx.login_totp_uri(secret, "ana@example.com")
+    codes = cvx.new_backup_codes()
+    assert len(set(codes)) == 8 and all(len(cvx.normalize_backup_code(c)) == 8 for c in codes)
+    assert cvx.hash_backup_code(1, codes[0]) == cvx.hash_backup_code(1, codes[0].lower().replace("-", " "))
+    m = cvx.qr_matrix(cvx.login_totp_uri(secret, "ana"))
+    assert len(m) == len(m[0]) >= 21
+
+
+def _login_with(app, monkeypatch, answer, pw=PW):
+    monkeypatch.setattr(gcs.simpledialog, "askstring", lambda *a, **k: answer)
+    if app.current_user is not None:
+        app._logout()
+    app.entry_user.delete(0, "end"); app.entry_user.insert(0, "ana")
+    app.entry_pass.delete(0, "end"); app.entry_pass.insert(0, pw)
+    app._login()
+    return app.current_user is not None
+
+
+def test_verificacion_en_dos_pasos_en_la_app(ui, monkeypatch):
+    app = ui
+    errors = []
+    monkeypatch.setattr(gcs.messagebox, "showerror", lambda *a, **k: errors.append(a))
+    monkeypatch.setattr(gcs.messagebox, "showinfo", lambda *a, **k: None)
+    monkeypatch.setattr(gcs.messagebox, "showwarning", lambda *a, **k: None)
+    register_and_login(app)
+    monkeypatch.setattr(app, "_ask_master", lambda: True)
+    shown = []
+    monkeypatch.setattr(app, "_show_plans_screen", lambda: shown.append("planes"))
+
+    # Plan gratis: no se puede activar.
+    app.user_version = "free"
+    app._enable_login_2fa()
+    assert shown == ["planes"]
+
+    # Premium: QR, código y códigos de respaldo.
+    app.user_version = "premium"
+    secret_holder = {}
+    real_new = cvx.new_login_secret
+    monkeypatch.setattr(cvx, "new_login_secret", lambda: secret_holder.setdefault("s", real_new()))
+    captured = {}
+    monkeypatch.setattr(app, "_show_backup_codes", lambda codes, first_time=False: captured.update(codes=codes))
+    app._enable_login_2fa()
+    app.root.update()
+    page = [c for c in _walk(app.root) if isinstance(c, gcs.InlinePage)][-1]
+    entries = [w for w in _walk(page) if isinstance(w, tk.ttk.Entry) and str(w.cget("state")) != "readonly"]
+    cfg = {"secret": secret_holder["s"], "digits": 6, "period": 30, "algorithm": "SHA1"}
+    code, _ = cvx.totp_code(cfg)
+    entries[0].insert(0, code)
+    entries[0].event_generate("<Return>")
+    app.root.update()
+    assert len(captured["codes"]) == 8
+    with gcs.db() as conn:
+        row = gcs.get_user_by_id(conn, app.current_user["id"])
+    assert row["login_totp"].startswith("enc1:") and secret_holder["s"] not in row["login_totp"]
+
+    # Inicio de sesión: sin código, código malo, código ya usado → no entra.
+    assert not _login_with(app, monkeypatch, None)
+    assert not _login_with(app, monkeypatch, "000000")
+    assert not _login_with(app, monkeypatch, code)                 # ya se usó al activar
+    # Código de respaldo: entra una vez.
+    backup = captured["codes"][0]
+    assert _login_with(app, monkeypatch, backup.lower())
+    assert not _login_with(app, monkeypatch, backup)
+    # Siguiente código TOTP válido: entra.
+    import time as _t
+    nxt, _ = cvx.totp_code(cfg, at=_t.time() + 30)
+    assert _login_with(app, monkeypatch, nxt)
+
+
+def _walk(w):
+    for c in w.winfo_children():
+        yield c
+        yield from _walk(c)

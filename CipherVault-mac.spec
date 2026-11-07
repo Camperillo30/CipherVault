@@ -33,7 +33,7 @@ a = Analysis(
         'cryptography.hazmat.primitives.hashes',
         'tkinter', 'tkinter.ttk', 'tkinter.messagebox', 'tkinter.simpledialog', 'tkinter.filedialog',
         'sqlite3', 'logging.handlers',
-        'cv_extras', 'cv_sync',
+        'cv_extras', 'cv_sync', 'segno',
         # Auto-escritura (pyobjc): atajo global, ventana activa y teclas
         'AppKit', 'Foundation', 'Quartz', 'objc',
     ],

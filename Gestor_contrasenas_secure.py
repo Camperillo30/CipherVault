@@ -291,6 +291,7 @@ _PREMIUM_FEATURES = [
     "Exportar e importar (.cvault y CSV)",
     "Copia de seguridad automática",
     "Códigos 2FA (TOTP)",
+    "Verificación en dos pasos al entrar",
     "Soporte prioritario",
 ]
 
@@ -347,7 +348,7 @@ _RETIRED_TEAM_PRICES = {39900, 59900, 99900}
 
 def _team_plan(key: str, users: int | None, default_price: int) -> dict:
     """Paquete del plan Equipo. users=None → usuarios ilimitados (un código de empresa)."""
-    label = f"{users} usuarios" if users else "Usuarios ilimitados"
+    label = f"{users} usuarios" if users else "Hasta 100 usuarios"
     price = _env_int(f"CIPHERVAULT_PRICE_{key.upper()}_COP", default_price)
     if price in _RETIRED_TEAM_PRICES:          # precio viejo de un .env antiguo
         price = default_price
@@ -361,7 +362,7 @@ def _team_plan(key: str, users: int | None, default_price: int) -> dict:
         "periodo":     "/mes",
         "ahorro_pct":  saving,
         "descripcion": (f"{users} códigos de activación, uno por persona." if users else
-                        "Un código de empresa para todo tu equipo (uso justo: hasta 100 equipos)."),
+                        "Un código de empresa para todo tu equipo: máximo 100 usuarios."),
         "color":       "#74b9ff",
         "meses":       1,
         "badge":       "EMPRESAS",
@@ -1195,35 +1196,35 @@ VERSIONS = {
         "name": "Gratis", "max_passwords": FREE_MAX_PASSWORDS,
         "security_analysis": False, "password_length_max": 16,
         "categories": False, "export": False, "backup": False, "totp": False,
-        "sync": False, "team": False,
+        "sync": False, "team": False, "login_2fa": False,
         "notes_max_length": 100, "price": 0, "color": "#b2bec3",
     },
     "basic": {
         "name": "Básico", "max_passwords": -1,
         "security_analysis": True, "password_length_max": 32,
         "categories": True, "export": True, "backup": False, "totp": True,
-        "sync": False, "team": False,
+        "sync": False, "team": False, "login_2fa": False,
         "notes_max_length": 500, "price": 0, "color": "#00cec9",
     },
     "premium": {
         "name": "Premium", "max_passwords": -1,
         "security_analysis": True, "password_length_max": 64,
         "categories": True, "export": True, "backup": True, "totp": True,
-        "sync": True, "team": False,
+        "sync": True, "team": False, "login_2fa": True,
         "notes_max_length": 2000, "price": PLANES["premium_mensual"]["precio_cop"], "color": "#fd79a8",
     },
     "equipo": {
         "name": "Equipo", "max_passwords": -1,
         "security_analysis": True, "password_length_max": 64,
         "categories": True, "export": True, "backup": True, "totp": True,
-        "sync": True, "team": True,
+        "sync": True, "team": True, "login_2fa": True,
         "notes_max_length": 2000, "price": TEAM_PLANES["equipo_3"]["precio_cop"], "color": "#74b9ff",
     },
     "developer": {
         "name": "Desarrollador", "max_passwords": -1,
         "security_analysis": True, "password_length_max": 128,
         "categories": True, "export": True, "backup": True, "totp": True,
-        "sync": True, "team": True,
+        "sync": True, "team": True, "login_2fa": True,
         "notes_max_length": 500000, "price": 0, "color": "#6c5ce7",
     },
 }
@@ -1238,7 +1239,7 @@ def get_features(version: str) -> dict:
 #  MARCA / COPYRIGHT
 # ══════════════════════════════════════════════
 APP_NAME = "CipherVault"
-APP_VERSION = "3.2.0"   # build.ps1 la usa para nombrar el instalador
+APP_VERSION = "3.3.0"   # build.ps1 la usa para nombrar el instalador
 SUPPORT_EMAIL = "ciphervaultpass@gmail.com"
 APP_AUTHOR = "S.C.A"
 APP_COPYRIGHT_YEAR = "2026"
@@ -1670,6 +1671,9 @@ class CipherVaultApp:
                 ("team_priv",         "NULL"),   # clave privada X25519 del miembro (cifrada con la bóveda)
                 ("team_pub",          "NULL"),   # clave pública (base64), de ella sale el código de miembro
                 ("team_path",         "NULL"),   # archivo .cvteam del equipo (cifrado con la bóveda)
+                ("login_totp",        "NULL"),   # clave 2FA del inicio de sesión (cifrada con la bóveda)
+                ("login_totp_last",   "NULL"),   # último intervalo de 30 s usado (no se acepta dos veces)
+                ("login_totp_backup", "NULL"),   # JSON con el hash de los códigos de respaldo sin usar
             ]:
                 if col not in existing:
                     conn.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT DEFAULT {defval}")
@@ -2262,8 +2266,60 @@ class CipherVaultApp:
             self._register_failure(uname)
             messagebox.showerror("Error", "Usuario o contraseña incorrectos.")
             return
+        if user.get("login_totp") and not self._check_login_2fa(user, auth):
+            return
         self._clear_failures(uname)
         self._open_session(user, auth)
+
+    def _check_login_2fa(self, user: dict, auth: "AuthResult") -> bool:
+        """Segundo paso del inicio de sesión: pide el código de 6 dígitos de la app de
+        autenticación (o un código de respaldo). Un código errado cuenta como intento fallido."""
+        try:
+            secret = dec_text(_fernet_from_key(auth.key), user["login_totp"])
+        except Exception:  # noqa: BLE001
+            log.exception("No se pudo leer la clave 2FA del inicio de sesión")
+            secret = ""
+        if not secret:
+            messagebox.showerror("Verificación en dos pasos",
+                                 "No se pudo leer la configuración de verificación en dos pasos. "
+                                 "Entra con un código de respaldo o revisa el archivo de registro.")
+        code = simpledialog.askstring(
+            "Verificación en dos pasos",
+            "Escribe el código de 6 dígitos de tu app de autenticación\n"
+            "(o uno de tus códigos de respaldo):", parent=self.root)
+        if code is None:
+            return False
+        if self._consume_login_code(user, secret, code):
+            return True
+        self._register_failure(user["username"])
+        messagebox.showerror("Error", "El código no es correcto o ya se usó. Revisa que la hora de tu "
+                                      "celular y de este computador estén bien.")
+        return False
+
+    def _consume_login_code(self, user: dict, secret: str, code: str) -> bool:
+        """Valida un código TOTP (sin repetir) o un código de respaldo (y lo gasta)."""
+        last = user.get("login_totp_last")
+        last = int(last) if str(last or "").isdigit() else None
+        counter = cvx.verify_login_totp(secret, code, last) if secret else None
+        with db() as conn:
+            if counter is not None:
+                conn.execute("UPDATE users SET login_totp_last=? WHERE id=?", (str(counter), user["id"]))
+                return True
+            try:
+                backups = json.loads(user.get("login_totp_backup") or "[]")
+            except ValueError:
+                backups = []
+            digest = cvx.hash_backup_code(user["id"], code)
+            if len(cvx.normalize_backup_code(code)) == 8 and digest in backups:
+                backups.remove(digest)
+                conn.execute("UPDATE users SET login_totp_backup=? WHERE id=?", (json.dumps(backups), user["id"]))
+                log.info("Inicio de sesión con código de respaldo (%d restantes)", len(backups))
+                if len(backups) <= 2:
+                    self.root.after(1500, lambda: messagebox.showwarning(
+                        "Códigos de respaldo",
+                        f"Te quedan {len(backups)} código(s) de respaldo. Genera nuevos en Configuración."))
+                return True
+        return False
 
     def _open_session(self, user: dict, auth: "AuthResult"):
         """Abre la sesión de un usuario ya autenticado: prepara la bóveda, migra datos
@@ -3825,6 +3881,34 @@ class CipherVaultApp:
             else:
                 self._btn(sec, "🪟 Activar Windows Hello", self._enable_hello).pack(anchor="w")
 
+        # verificación en dos pasos al iniciar sesión (Premium y Equipo)
+        with db() as conn:
+            u2 = get_user_by_id(conn, self.current_user["id"]) or {}
+        tfa_on = bool(u2.get("login_totp"))
+        self._label(sec, "Verificación en dos pasos al iniciar sesión", bold=True,
+                    color=C["muted"]).pack(anchor="w", pady=(14, 4))
+        if tfa_on:
+            try:
+                left = len(json.loads(u2.get("login_totp_backup") or "[]"))
+            except ValueError:
+                left = 0
+            self._label(sec, f"✅ Activada: después de la contraseña maestra se pide el código de tu "
+                             f"celular. Códigos de respaldo sin usar: {left}.",
+                        color=C["success"], font_size=10, wraplength=self._s(440), justify="left").pack(anchor="w")
+            row2 = tk.Frame(sec, bg=C["card"])
+            row2.pack(anchor="w", pady=(6, 0))
+            self._btn(row2, "🔁 Nuevos códigos de respaldo", self._regen_backup_codes).pack(side="left", padx=(0, 8))
+            self._btn(row2, "Desactivar", self._disable_login_2fa).pack(side="left")
+        elif get_features(self.user_version).get("login_2fa"):
+            self._label(sec, "Pide además un código de 6 dígitos de Google Authenticator, Microsoft "
+                             "Authenticator u otra app similar cada vez que entras.",
+                        color=C["muted"], font_size=10, wraplength=self._s(440), justify="left").pack(anchor="w")
+            self._btn(sec, "📱 Activar verificación en dos pasos", self._enable_login_2fa).pack(anchor="w", pady=(6, 0))
+        else:
+            self._label(sec, "🔒 Disponible en los planes Premium y Equipo.", color=C["muted"],
+                        font_size=10).pack(anchor="w")
+            self._btn(sec, "Ver planes", self._show_plans_screen).pack(anchor="w", pady=(6, 0))
+
         # auto-escritura (Windows y macOS)
         if IS_WINDOWS or sys.platform == "darwin":
             auto = self._card(extra_row, padx=24, pady=16)
@@ -4270,6 +4354,172 @@ class CipherVaultApp:
         if hasattr(self, "content_frame") and self.content_frame.winfo_exists():
             self._tab_list()
 
+    # ══════════════════════════════════════════
+    #  VERIFICACIÓN EN DOS PASOS AL INICIAR SESIÓN
+    # ══════════════════════════════════════════
+    def _draw_qr(self, parent, text: str, size: int = 220) -> tk.Canvas:
+        """Dibuja un código QR en un Canvas (fondo blanco y margen, para que lo lea el celular)."""
+        matrix = cvx.qr_matrix(text)
+        border = 4
+        n = len(matrix) + 2 * border
+        cell = max(2, self._s(size) // n)
+        canvas = tk.Canvas(parent, width=cell * n, height=cell * n, bg="white", highlightthickness=0, bd=0)
+        for y, row in enumerate(matrix):
+            for x, dark in enumerate(row):
+                if dark:
+                    x0, y0 = (x + border) * cell, (y + border) * cell
+                    canvas.create_rectangle(x0, y0, x0 + cell, y0 + cell, fill="black", width=0)
+        return canvas
+
+    def _enable_login_2fa(self):
+        """Activa la verificación en dos pasos: muestra el QR, pide un código para confirmar
+        que el celular quedó bien configurado y entrega los códigos de respaldo."""
+        if not get_features(self.user_version).get("login_2fa"):
+            messagebox.showinfo("Verificación en dos pasos", "Disponible en los planes Premium y Equipo.")
+            self._show_plans_screen()
+            return
+        if not self._ask_master():
+            return
+        secret = cvx.new_login_secret()
+        account = self.current_user.get("email") or self.current_user["username"]
+        uri = cvx.login_totp_uri(secret, account)
+
+        win = self._inline_page()
+        win.title("Verificación en dos pasos")
+        body = tk.Frame(win, bg=C["bg"])
+        body.pack(fill="x", padx=24, pady=8)
+        self._label(body, "📱 Verificación en dos pasos", font_size=20, bold=True).pack(anchor="w")
+        self._label(body, "Después de tu contraseña maestra, CipherVault te pedirá el código de 6 dígitos "
+                          "que muestra tu celular. Así nadie entra solo con tu contraseña.",
+                    color=C["muted"], font_size=10, wraplength=self._s(640), justify="left").pack(anchor="w", pady=(4, 14))
+        card = self._card(body, padx=24, pady=20)
+        card.pack(fill="x")
+        cols = tk.Frame(card, bg=C["card"])
+        cols.pack(fill="x")
+        try:
+            self._draw_qr(cols, uri).pack(side="left", padx=(0, 24), anchor="n")
+        except ImportError:
+            log.warning("Falta el paquete segno: no se puede dibujar el QR")
+        steps = tk.Frame(cols, bg=C["card"])
+        steps.pack(side="left", fill="both", expand=True)
+        self._label(steps, "1. Abre Google Authenticator, Microsoft Authenticator o una app similar y "
+                           "escanea este código QR.", wraplength=self._s(420), justify="left").pack(anchor="w")
+        self._label(steps, "¿No puedes escanearlo? Agrega una cuenta con esta clave:", color=C["muted"],
+                    font_size=10).pack(anchor="w", pady=(10, 2))
+        key_var = tk.StringVar(value=cvx.group_secret(secret))
+        key_row = tk.Frame(steps, bg=C["card"])
+        key_row.pack(anchor="w")
+        tk.Entry(key_row, textvariable=key_var, state="readonly", width=40, font=("Consolas", 12),
+                 readonlybackground=C["card2"], fg=C["text"], relief="flat", bd=6).pack(side="left")
+        self._btn(key_row, "📋", lambda: self._copy_secret(secret, 60)).pack(side="left", padx=(6, 0))
+        self._label(steps, "2. Escribe el código de 6 dígitos que aparece en la app:",
+                    wraplength=self._s(420), justify="left").pack(anchor="w", pady=(16, 4))
+        code_var = tk.StringVar()
+        code_row = tk.Frame(steps, bg=C["card"])
+        code_row.pack(anchor="w")
+        code_entry = ttk.Entry(code_row, textvariable=code_var, width=10, font=("Consolas", 14))
+        code_entry.pack(side="left")
+        code_entry.focus_set()
+        msg = self._label(steps, "", color=C["danger"], font_size=10)
+        msg.pack(anchor="w", pady=(6, 0))
+
+        def confirm(_event=None):
+            counter = cvx.verify_login_totp(secret, code_var.get())
+            if counter is None:
+                msg.config(text="El código no coincide. Espera al siguiente y revisa la hora del celular.")
+                return
+            codes = cvx.new_backup_codes()
+            uid = self.current_user["id"]
+            with db() as conn:
+                conn.execute("UPDATE users SET login_totp=?, login_totp_last=?, login_totp_backup=? WHERE id=?",
+                             (enc_text(self.current_user["vault"], secret), str(counter),
+                              json.dumps([cvx.hash_backup_code(uid, c) for c in codes]), uid))
+            log.info("Verificación en dos pasos activada")
+            win.destroy()
+            self._show_backup_codes(codes, first_time=True)
+
+        code_entry.bind("<Return>", confirm)
+        self._btn(code_row, "✅ Verificar y activar", confirm, style="Primary.TButton").pack(side="left", padx=(8, 0))
+        self._btn(body, "Cancelar", win.destroy).pack(anchor="w", pady=(14, 0))
+
+    def _show_backup_codes(self, codes: list[str], first_time: bool = False):
+        """Muestra una sola vez los códigos de respaldo, con opción de copiarlos o guardarlos."""
+        win = self._inline_page()
+        win.title("Códigos de respaldo")
+        body = tk.Frame(win, bg=C["bg"])
+        body.pack(fill="x", padx=24, pady=8)
+        title = "✅ Verificación en dos pasos activada" if first_time else "🔁 Códigos de respaldo nuevos"
+        self._label(body, title, font_size=20, bold=True).pack(anchor="w")
+        self._label(body, "Guarda estos códigos en un lugar seguro (por ejemplo, en tu kit de emergencia). "
+                          "Cada uno sirve una sola vez para entrar si pierdes o cambias el celular. "
+                          "No se volverán a mostrar." + ("" if first_time else " Los códigos anteriores ya no sirven."),
+                    color=C["muted"], font_size=10, wraplength=self._s(640), justify="left").pack(anchor="w", pady=(4, 14))
+        card = self._card(body, padx=24, pady=20)
+        card.pack(anchor="w")
+        grid = tk.Frame(card, bg=C["card"])
+        grid.pack()
+        for i, code in enumerate(codes):
+            tk.Label(grid, text=code, bg=C["card"], fg=C["text"], font=("Consolas", 14, "bold")
+                     ).grid(row=i // 2, column=i % 2, padx=18, pady=4)
+        text = "Códigos de respaldo de CipherVault (" + (self.current_user.get("email") or
+                                                          self.current_user["username"]) + ")\n" + "\n".join(codes)
+
+        def save():
+            path = filedialog.asksaveasfilename(parent=self.root, defaultextension=".txt",
+                                                initialfile="CipherVault-codigos-de-respaldo.txt",
+                                                filetypes=[("Texto", "*.txt")])
+            if path:
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(text + "\n")
+                messagebox.showinfo("Guardado", "Códigos guardados. Guarda ese archivo en un lugar seguro.")
+
+        row = tk.Frame(body, bg=C["bg"])
+        row.pack(anchor="w", pady=(14, 0))
+        self._btn(row, "📋 Copiar", lambda: self._copy_secret(text, 60)).pack(side="left", padx=(0, 8))
+        self._btn(row, "💾 Guardar .txt", save).pack(side="left", padx=(0, 8))
+
+        def done():
+            win.destroy()
+            self._tab_settings()
+        self._btn(row, "Listo", done, style="Primary.TButton").pack(side="left")
+
+    def _regen_backup_codes(self):
+        if not self._ask_master():
+            return
+        codes = cvx.new_backup_codes()
+        uid = self.current_user["id"]
+        with db() as conn:
+            conn.execute("UPDATE users SET login_totp_backup=? WHERE id=?",
+                         (json.dumps([cvx.hash_backup_code(uid, c) for c in codes]), uid))
+        log.info("Códigos de respaldo de la verificación en dos pasos regenerados")
+        self._show_backup_codes(codes)
+
+    def _disable_login_2fa(self):
+        """Desactiva la verificación en dos pasos (pide la maestra y un código vigente)."""
+        if not self._ask_master():
+            return
+        with db() as conn:
+            user = get_user_by_id(conn, self.current_user["id"])
+        try:
+            secret = dec_text(self.current_user["vault"], user.get("login_totp"))
+        except Exception:  # noqa: BLE001
+            secret = ""
+        code = simpledialog.askstring("Desactivar verificación en dos pasos",
+                                      "Escribe el código de 6 dígitos de tu celular\n(o un código de respaldo):",
+                                      parent=self.root)
+        if code is None:
+            return
+        if not self._consume_login_code(user, secret, code):
+            self._register_failure(user["username"])
+            messagebox.showerror("Error", "El código no es correcto o ya se usó.")
+            return
+        with db() as conn:
+            conn.execute("UPDATE users SET login_totp=NULL, login_totp_last=NULL, login_totp_backup=NULL "
+                         "WHERE id=?", (user["id"],))
+        log.info("Verificación en dos pasos desactivada")
+        messagebox.showinfo("Verificación en dos pasos", "Se desactivó. Ahora entras solo con tu contraseña maestra.")
+        self._tab_settings()
+
     def _change_master_password(self):
         """Cambia la contraseña maestra: pide la actual, genera un salt nuevo y vuelve a cifrar
         TODA la bóveda en una sola transacción (si algo falla, no cambia nada)."""
@@ -4321,7 +4571,7 @@ class CipherVaultApp:
                              "WHERE id=?",
                              (_make_login_hash(new_key), new_salt, seal, user["id"]))
                 hello_was_on = bool(user.get("hello_wrapped"))
-                for column in ("sync_path", "sync_key", "team_priv", "team_path"):
+                for column in ("sync_path", "sync_key", "team_priv", "team_path", "login_totp"):
                     if user.get(column):
                         conn.execute(f"UPDATE users SET {column}=? WHERE id=?",
                                      (enc_text(new_vault, dec_text(old_vault, user[column])), user["id"]))

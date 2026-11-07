@@ -16,9 +16,9 @@
 ## Descargar
 
 <p align="center">
-  <a href="https://github.com/Camperillo30/CipherVault/releases/download/v3.2.0-beta/CipherVault-Setup.exe"><b>⬇️ Descargar para Windows</b></a> (Windows 10 y 11)
+  <a href="https://github.com/Camperillo30/CipherVault/releases/download/v3.3.0-beta/CipherVault-Setup.exe"><b>⬇️ Descargar para Windows</b></a> (Windows 10 y 11)
   &nbsp;·&nbsp;
-  <a href="https://github.com/Camperillo30/CipherVault/releases/download/v3.2.0-beta/CipherVault-macOS.zip"><b>⬇️ Descargar para Mac</b></a> (macOS 11 o superior, chip Apple M1 o más nuevo)
+  <a href="https://github.com/Camperillo30/CipherVault/releases/download/v3.3.0-beta/CipherVault-macOS.zip"><b>⬇️ Descargar para Mac</b></a> (macOS 11 o superior, chip Apple M1 o más nuevo)
   <br><sub><a href="https://github.com/Camperillo30/CipherVault/releases">Todas las versiones</a></sub>
 </p>
 
@@ -47,6 +47,7 @@ En Mac no está Windows Hello; todo lo demás funciona igual (bóveda, 2FA, sinc
 - **Duplicar contraseña.** Crea una entrada nueva con los datos de otra (por ejemplo, una segunda cuenta del mismo sitio) para cambiar solo lo necesario.
 - **Windows Hello.** Entrar con huella, rostro o PIN de Windows en vez de escribir la contraseña maestra.
 - **Códigos 2FA (TOTP).** Guarda la clave de verificación en dos pasos y muestra el código de 6 dígitos con su cuenta regresiva.
+- **Verificación en dos pasos al iniciar sesión (Premium y Equipo).** Se activa en Configuración escaneando un QR con Google Authenticator, Microsoft Authenticator o similar; desde ahí, después de la contraseña maestra se pide el código de 6 dígitos. Trae 8 códigos de respaldo de un solo uso por si se pierde el celular. La clave se guarda cifrada con la bóveda, un código no se acepta dos veces y los errores cuentan para el bloqueo por intentos. Windows Hello no la pide (ya combina el equipo con la huella, el rostro o el PIN).
 - **Importar desde Chrome, Edge, Firefox, Bitwarden, LastPass, 1Password, KeePass y Apple** (CSV), y exportar a CSV o a `.cvault` cifrado.
 - **Kit de emergencia en PDF** para imprimir y anotar la contraseña maestra a mano.
 - **Sincronización entre equipos** por una carpeta de OneDrive, Google Drive o Dropbox: un archivo `.cvsync` cifrado, sin servidores propios. Mezcla los cambios de cada equipo y propaga los borrados.
@@ -70,7 +71,7 @@ En Mac no está Windows Hello; todo lo demás funciona igual (bóveda, 2FA, sinc
 ## Archivos
 
 - `Gestor_contrasenas_secure.py`: la aplicación (interfaz, criptografía, licencias).
-- `cv_extras.py`: importar/exportar CSV, códigos 2FA, kit de emergencia en PDF, auto-escritura y Windows Hello.
+- `cv_extras.py`: importar/exportar CSV, códigos 2FA y verificación en dos pasos al entrar, kit de emergencia en PDF, auto-escritura y Windows Hello.
 - `cv_sync.py`: sincronización por carpeta (`.cvsync`) y bóveda de equipo (`.cvteam`, claves X25519).
 - `installer/CipherVault.iss`: instalador de Windows (Inno Setup 6 o 7), lo compila `build.ps1`.
 - `.github/workflows/release.yml` (con `CipherVault-mac.spec`): al subir una etiqueta `v*` desde PyCharm (o al publicar un release en GitHub), GitHub Actions compila el instalador de Windows y la app de macOS (`CipherVault-macOS.zip`). Necesita los secretos `CIPHERVAULT_ACTIVATION_URL` y `CIPHERVAULT_ACTIVATION_SECRET` en *Settings → Secrets and variables → Actions*.
@@ -148,9 +149,9 @@ Flujo de compra: la app abre el Payment Link de Wompi → Make genera un **códi
 |---|---|---|---|---|---|
 | `free` | 50 | no | no | no | gratis |
 | `premium` | ilimitadas | sí | sí | sí | 9.900 COP/mes · 89.900 COP/año · 149.900 COP de por vida |
-| `equipo` | ilimitadas | sí, + bóveda compartida, registro de actividad e informe de seguridad del equipo | sí | sí | por mes: 3 personas 24.900 (8.300 c/u) · 5 personas 37.900 (7.580 c/u) · 10 personas 64.900 (6.490 c/u) · ilimitadas 199.900 |
+| `equipo` | ilimitadas | sí, + bóveda compartida, registro de actividad e informe de seguridad del equipo | sí | sí | por mes: 3 personas 24.900 (8.300 c/u) · 5 personas 37.900 (7.580 c/u) · 10 personas 64.900 (6.490 c/u) · hasta 100 personas 199.900 (máximo del plan) |
 
-Los paquetes de Equipo los paga la empresa en un solo pago mensual, y cada persona sale más barata que un Premium individual (9.900). Make envía al correo del pago 3, 5 o 10 códigos (uno por persona) o, en el ilimitado, un código de empresa con uso justo de hasta 100 equipos. Estos códigos **no** están atados al correo: cada empleado los activa en su propia cuenta. La app primero prueba el código con el correo de la cuenta y, si no existe, como código de equipo.
+Los paquetes de Equipo los paga la empresa en un solo pago mensual, y cada persona sale más barata que un Premium individual (9.900). Make envía al correo del pago 3, 5 o 10 códigos (uno por persona) o, en el paquete grande, un código de empresa para máximo 100 usuarios (100 equipos). Estos códigos **no** están atados al correo: cada empleado los activa en su propia cuenta. La app primero prueba el código con el correo de la cuenta y, si no existe, como código de equipo.
 
 Las tres opciones de Premium activan el mismo plan; solo cambia la duración que Make guarda con el código (1, 12 o 1200 meses). El plan `basic` ya no se vende, pero los códigos emitidos antes siguen funcionando (ahora con contraseñas ilimitadas). Importar CSV y la auto-escritura están disponibles en todos los planes.
 

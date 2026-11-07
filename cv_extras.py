@@ -226,6 +226,76 @@ def totp_code(text_or_cfg, at: float | None = None) -> tuple[str, int]:
 
 
 # ══════════════════════════════════════════════
+#  VERIFICACIÓN EN DOS PASOS AL INICIAR SESIÓN (Premium y Equipo)
+# ══════════════════════════════════════════════
+# La clave TOTP se guarda cifrada con la bóveda (sin la contraseña maestra no se puede leer)
+# y los códigos de respaldo solo como hash. Se acepta el código de la ventana actual y el de
+# las ventanas vecinas (±30 s por relojes desfasados), y nunca dos veces el mismo.
+_BACKUP_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"     # sin 0/O ni 1/I
+
+
+def new_login_secret() -> str:
+    """Clave Base32 de 160 bits (lo que usan Google Authenticator y similares)."""
+    import secrets
+    return base64.b32encode(secrets.token_bytes(20)).decode("ascii").rstrip("=")
+
+
+def login_totp_uri(secret: str, account: str, issuer: str = "CipherVault") -> str:
+    label = urllib.parse.quote(f"{issuer}:{account}")
+    query = urllib.parse.urlencode({"secret": secret, "issuer": issuer, "digits": 6, "period": 30})
+    return f"otpauth://totp/{label}?{query}"
+
+
+def group_secret(secret: str) -> str:
+    """'JBSWY3DPEHPK3PXP' → 'JBSW Y3DP EHPK 3PXP' (más fácil de copiar a mano)."""
+    return " ".join(secret[i:i + 4] for i in range(0, len(secret), 4))
+
+
+def verify_login_totp(secret: str, code: str, last_counter: int | None = None,
+                      at: float | None = None, window: int = 1) -> int | None:
+    """Si `code` es válido devuelve el contador de 30 s que usó (para no aceptarlo otra vez);
+    si no, None. Rechaza contadores menores o iguales a `last_counter`."""
+    code = re.sub(r"\s", "", code or "")
+    if not re.fullmatch(r"\d{6}", code):
+        return None
+    cfg = {"secret": secret, "digits": 6, "period": 30, "algorithm": "SHA1"}
+    now = time.time() if at is None else at
+    base = int(now // 30)
+    for counter in range(base - window, base + window + 1):
+        if last_counter is not None and counter <= last_counter:
+            continue
+        expected, _ = totp_code(cfg, at=counter * 30)
+        if hmac.compare_digest(expected, code):
+            return counter
+    return None
+
+
+def new_backup_codes(count: int = 8) -> list[str]:
+    """Códigos de un solo uso para entrar si se pierde el celular: 'K7QF-M2XR'."""
+    import secrets
+    codes = []
+    for _ in range(count):
+        raw = "".join(secrets.choice(_BACKUP_ALPHABET) for _ in range(8))
+        codes.append(f"{raw[:4]}-{raw[4:]}")
+    return codes
+
+
+def normalize_backup_code(code: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", (code or "").upper())
+
+
+def hash_backup_code(user_id: int, code: str) -> str:
+    return hashlib.sha256(f"cv-backup|{user_id}|{normalize_backup_code(code)}".encode("utf-8")).hexdigest()
+
+
+def qr_matrix(text: str) -> list[list[bool]]:
+    """Matriz del código QR (True = módulo oscuro), sin el margen. Usa `segno`."""
+    import segno
+    qr = segno.make(text, error="m", micro=False)
+    return [[bool(cell) for cell in row] for row in qr.matrix]
+
+
+# ══════════════════════════════════════════════
 #  KIT DE EMERGENCIA (PDF mínimo, sin dependencias)
 # ══════════════════════════════════════════════
 def _pdf_text(value: str) -> str:
