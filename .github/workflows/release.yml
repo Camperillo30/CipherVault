@@ -3,7 +3,6 @@
 # Se ejecuta al subir una etiqueta desde PyCharm (Git > New Tag "v3.2.0" y Push con "Push tags"),
 # al PUBLICAR un release desde la web de GitHub (también si es pre-release) o a mano, y sube:
 #   - CipherVault-Setup.exe        instalador de Windows (build.ps1 + Inno Setup)
-#   - CipherVault-portable.exe     la app sin instalador
 #   - CipherVault-macOS.zip        la app de macOS (CipherVault.app)
 # Con etiqueta: tiene que coincidir con APP_VERSION de Gestor_contrasenas_secure.py. "v3.2.0" crea
 # una versión definitiva; "v3.2.0-beta" (con guion), una pre-release.
@@ -67,7 +66,6 @@ jobs:
             echo "| Sistema | Archivo |"
             echo "| --- | --- |"
             echo "| **Windows 10 u 11** (instalador) | \`CipherVault-Setup.exe\` |"
-            echo "| Windows sin instalar | \`CipherVault-portable.exe\` |"
             echo "| **Mac** (macOS 11 o superior, chip Apple M1 o más nuevo) | \`CipherVault-macOS.zip\` |"
             echo
             echo "Los archivos aparecen aquí unos minutos después de publicar, cuando GitHub termina de compilarlos."
@@ -115,8 +113,7 @@ jobs:
           $setup = Get-ChildItem dist -Filter "CipherVault-Setup-*.exe" | Select-Object -First 1
           if (-not $setup) { throw "No se genero el instalador." }
           Copy-Item $setup.FullName dist\CipherVault-Setup.exe
-          Copy-Item dist\CipherVault.exe dist\CipherVault-portable.exe
-          $files = @("dist\CipherVault-Setup.exe", "dist\CipherVault-portable.exe")
+          $files = @("dist\CipherVault-Setup.exe")
           gh release upload $env:TAG @files --clobber --repo $env:GITHUB_REPOSITORY
 
   macos:

@@ -16,16 +16,13 @@
 
 | Sistema | Descarga |
 | --- | --- |
-| Windows 10 u 11 (instalador) | [CipherVault-Setup.exe](https://github.com/Camperillo30/CipherVault/releases/latest/download/CipherVault-Setup.exe) |
-| Windows 10 u 11 (portable, sin instalar) | [CipherVault-portable.exe](https://github.com/Camperillo30/CipherVault/releases/latest/download/CipherVault-portable.exe) |
+| Windows 10 u 11 | [CipherVault-Setup.exe](https://github.com/Camperillo30/CipherVault/releases/latest/download/CipherVault-Setup.exe) |
 | Mac con Apple Silicon (M1 o posterior), macOS 11 o superior | [CipherVault-macOS.zip](https://github.com/Camperillo30/CipherVault/releases/latest/download/CipherVault-macOS.zip) |
 
 Todas las versiones y sus novedades están en [Releases](https://github.com/Camperillo30/CipherVault/releases). Mientras solo haya versiones de prueba (*pre-release*), como la 3.3.0-beta, estos enlaces no funcionan: descarga desde [la versión 3.3.0-beta](https://github.com/Camperillo30/CipherVault/releases/tag/v3.3.0-beta). La app empieza en el plan gratis (hasta 50 contraseñas).
 
 > [!CAUTION]
 > **CipherVault está en beta.** Puede tener errores, cambiar sin aviso o perder datos. No la uses para guardar tus contraseñas reales ni la instales en equipos de trabajo hasta que salga la versión estable.
-
-**¿Instalador o portable?** El instalador copia CipherVault en tu usuario, crea el acceso directo del menú Inicio (y, si quieres, el del escritorio) y aparece en «Agregar o quitar programas» para desinstalarlo. El portable es el mismo programa en un solo `.exe`: se abre con doble clic, sin instalar nada, y sirve para probarlo o usarlo en un equipo donde no quieres instalar. No aparece en el menú Inicio y para quitarlo basta borrar el archivo. En los dos casos la bóveda se guarda en `%LOCALAPPDATA%\CipherVault` del equipo, no junto al `.exe`: llevar el portable en una USB no lleva tus contraseñas.
 
 <details>
 <summary><b>Windows dice «Windows protegió su PC»</b></summary>
@@ -134,7 +131,7 @@ Los enlaces de *Descargar* apuntan siempre a la última versión publicada en Re
 2. Crea la etiqueta en PyCharm (*Git > New Tag*): `v3.2.0` para una versión definitiva, o `v3.2.0-beta` (con guion) para una pre-release.
 3. Súbela: *Git > Push*, con la casilla **Push tags** marcada.
 
-GitHub Actions crea el release y le sube el instalador de Windows, la versión portable y la app de macOS. Si la etiqueta no coincide con `APP_VERSION`, se detiene sin compilar. También sigue funcionando publicar un release desde la web de GitHub.
+GitHub Actions crea el release y le sube el instalador de Windows y la app de macOS. Si la etiqueta no coincide con `APP_VERSION`, se detiene sin compilar. También sigue funcionando publicar un release desde la web de GitHub.
 
 ## Seguridad (resumen)
 
