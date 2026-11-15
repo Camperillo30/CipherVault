@@ -1,6 +1,3 @@
-> [!CAUTION]
-> **CipherVault está en beta y todavía no está lista para instalarse.** Es una versión de prueba: puede tener errores, cambiar sin aviso o perder datos. No la uses para guardar tus contraseñas reales ni la instales en equipos de trabajo hasta que salga la versión estable.
-
 <p align="center">
   <img src="docs/icono.png" width="96" alt="Ícono de CipherVault">
 </p>
@@ -13,16 +10,22 @@
   <a href="https://claude.ai/artifact/CE3mjxkr9kbVoju1Jr2SFo">Sitio web</a>
 </p>
 
+![Panel principal de CipherVault](docs/captura-inicio.png)
+
 ## Descargar
 
-<p align="center">
-  <a href="https://github.com/Camperillo30/CipherVault/releases/download/v3.3.0-beta/CipherVault-Setup.exe"><b>⬇️ Descargar para Windows</b></a> (Windows 10 y 11)
-  &nbsp;·&nbsp;
-  <a href="https://github.com/Camperillo30/CipherVault/releases/download/v3.3.0-beta/CipherVault-portable.exe"><b>⬇️ Windows portable</b></a> (sin instalar)
-  &nbsp;·&nbsp;
-  <a href="https://github.com/Camperillo30/CipherVault/releases/download/v3.3.0-beta/CipherVault-macOS.zip"><b>⬇️ Descargar para Mac</b></a> (macOS 11 o superior, chip Apple M1 o más nuevo)
-  <br><sub>Versión 3.3.0-beta · <a href="https://github.com/Camperillo30/CipherVault/releases">Todas las versiones</a></sub>
-</p>
+| Sistema | Descarga |
+| --- | --- |
+| Windows 10 u 11 (instalador) | [CipherVault-Setup.exe](https://github.com/Camperillo30/CipherVault/releases/latest/download/CipherVault-Setup.exe) |
+| Windows 10 u 11 (portable, sin instalar) | [CipherVault-portable.exe](https://github.com/Camperillo30/CipherVault/releases/latest/download/CipherVault-portable.exe) |
+| Mac con Apple Silicon (M1 o posterior), macOS 11 o superior | [CipherVault-macOS.zip](https://github.com/Camperillo30/CipherVault/releases/latest/download/CipherVault-macOS.zip) |
+
+Todas las versiones y sus novedades están en [Releases](https://github.com/Camperillo30/CipherVault/releases). Mientras solo haya versiones de prueba (*pre-release*), como la 3.3.0-beta, estos enlaces no funcionan: descarga desde [la versión 3.3.0-beta](https://github.com/Camperillo30/CipherVault/releases/tag/v3.3.0-beta). La app empieza en el plan gratis (hasta 50 contraseñas).
+
+> [!CAUTION]
+> **CipherVault está en beta.** Puede tener errores, cambiar sin aviso o perder datos. No la uses para guardar tus contraseñas reales ni la instales en equipos de trabajo hasta que salga la versión estable.
+
+**¿Instalador o portable?** El instalador copia CipherVault en tu usuario, crea el acceso directo del menú Inicio (y, si quieres, el del escritorio) y aparece en «Agregar o quitar programas» para desinstalarlo. El portable es el mismo programa en un solo `.exe`: se abre con doble clic, sin instalar nada, y sirve para probarlo o usarlo en un equipo donde no quieres instalar. No aparece en el menú Inicio y para quitarlo basta borrar el archivo. En los dos casos la bóveda se guarda en `%LOCALAPPDATA%\CipherVault` del equipo, no junto al `.exe`: llevar el portable en una USB no lleva tus contraseñas.
 
 <details>
 <summary><b>Windows dice «Windows protegió su PC»</b></summary>
@@ -39,8 +42,6 @@ CipherVault todavía no tiene firma de código, así que SmartScreen muestra ese
 
 En Mac no está Windows Hello; todo lo demás funciona igual (bóveda, 2FA, sincronización, equipo, importar CSV). La auto-escritura usa **Ctrl + Option + A** y necesita dos permisos que macOS pide la primera vez: **Accesibilidad** (Ajustes del Sistema → Privacidad y seguridad → Accesibilidad → activar CipherVault y volver a abrir la app) y **Automatización** para leer la dirección de Safari, Chrome, Edge o Brave.
 </details>
-
-![Panel principal de CipherVault](docs/captura-inicio.png)
 
 ## Funciones
 
@@ -127,6 +128,8 @@ No distribuyas: `.env`, `developer.license`, `dev_credentials.json`, `desktop_ru
 
 ### Publicar una versión
 
+Los enlaces de *Descargar* apuntan siempre a la última versión publicada en Releases (las *pre-release* no cuentan como «última»), con nombres de archivo fijos.
+
 1. Sube `APP_VERSION` en `Gestor_contrasenas_secure.py` (por ejemplo a `3.2.0`) y haz *Commit and Push* en PyCharm.
 2. Crea la etiqueta en PyCharm (*Git > New Tag*): `v3.2.0` para una versión definitiva, o `v3.2.0-beta` (con guion) para una pre-release.
 3. Súbela: *Git > Push*, con la casilla **Push tags** marcada.
@@ -171,7 +174,7 @@ Ya no hay período de prueba: se empieza en el plan gratis (50 contraseñas, sin
 - **Licencias que no se pueden compartir.** Cada pago genera un código aleatorio del que el servidor solo guarda el hash. El código se liga a los equipos que lo canjean, hasta 3 (identificador derivado del `MachineGuid` de Windows), y la respuesta viene firmada con un *nonce* para que no se pueda reutilizar en otro equipo. El plan guardado en la base local lleva un sello HMAC atado al equipo.
 - **El `.exe` no se puede convertir en modo desarrollador.** `CipherVault.spec` se niega a compilar si la configuración trae credenciales de desarrollador, y la app compilada ignora variables de entorno, `.env` y archivos JSON sueltos.
 - **Prueba gratuita difícil de reiniciar.** La fecha de inicio se guarda en tres sitios (archivo, base de datos y registro de Windows) y la app detecta si se atrasa el reloj.
-- **75 pruebas automáticas**, incluidas pruebas de humo de la interfaz real con Tk que corren sin pantalla (Xvfb). Windows Hello y la auto-escritura se prueban con dobles (la parte que depende del hardware se prueba a mano en Windows).
+- **82 pruebas automáticas**, incluidas pruebas de humo de la interfaz real con Tk que corren sin pantalla (Xvfb). Windows Hello y la auto-escritura se prueban con dobles (la parte que depende del hardware se prueba a mano en Windows).
 
 ## Soporte
 
