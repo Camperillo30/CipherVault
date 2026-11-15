@@ -73,11 +73,15 @@ jobs:
             echo
             echo "Los archivos aparecen aquí unos minutos después de publicar, cuando GitHub termina de compilarlos."
             echo
-            echo "### Novedades"
-            echo
-            echo "- (escribe aquí los cambios de esta versión)"
-          } > notas.md
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "CipherVault $VERSION" --notes-file notas.md "$FLAG"
+            if [ -f packaging/notas_version.md ]; then
+              cat packaging/notas_version.md
+            else
+              echo "### Novedades"
+              echo
+              echo "- (escribe aquí los cambios de esta versión)"
+            fi
+          } > "$RUNNER_TEMP/notas.md"
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "CipherVault $VERSION" --notes-file "$RUNNER_TEMP/notas.md" "$FLAG"
           echo "seguir=true" >> "$GITHUB_OUTPUT"
 
   windows:

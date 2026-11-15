@@ -1254,7 +1254,7 @@ def get_features(version: str) -> dict:
 #  MARCA / COPYRIGHT
 # ══════════════════════════════════════════════
 APP_NAME = "CipherVault"
-APP_VERSION = "3.3.0"   # build.ps1 la usa para nombrar el instalador
+APP_VERSION = "3.3.1"   # build.ps1 la usa para nombrar el instalador
 SUPPORT_EMAIL = "ciphervaultpass@gmail.com"
 APP_AUTHOR = "S.C.A"
 APP_COPYRIGHT_YEAR = "2026"

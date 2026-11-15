@@ -20,7 +20,7 @@
 | Mac con Apple Silicon (M1 o posterior) | [CipherVault-macOS-AppleSilicon.zip](https://github.com/Camperillo30/CipherVault/releases/latest/download/CipherVault-macOS-AppleSilicon.zip) |
 | Mac con Intel | [CipherVault-macOS-Intel.zip](https://github.com/Camperillo30/CipherVault/releases/latest/download/CipherVault-macOS-Intel.zip) |
 
-Todas las versiones y sus novedades están en [Releases](https://github.com/Camperillo30/CipherVault/releases). Mientras solo haya versiones de prueba (*pre-release*), como la 3.3.0-beta, estos enlaces no funcionan: descarga desde [la versión 3.3.0-beta](https://github.com/Camperillo30/CipherVault/releases/tag/v3.3.0-beta). En Mac se necesita macOS 11 o superior; para saber cuál descargar, abre el menú Apple → *Acerca de este Mac*: si dice «Chip Apple M…» es Apple Silicon, y si dice «Procesador Intel», es Intel. La app empieza en el plan gratis (hasta 50 contraseñas).
+Todas las versiones y sus novedades están en [Releases](https://github.com/Camperillo30/CipherVault/releases). Mientras solo haya versiones de prueba (*pre-release*), como la 3.3.1-beta, estos enlaces no funcionan: descarga desde [la versión 3.3.1-beta](https://github.com/Camperillo30/CipherVault/releases/tag/v3.3.1-beta). En Mac se necesita macOS 11 o superior; para saber cuál descargar, abre el menú Apple → *Acerca de este Mac*: si dice «Chip Apple M…» es Apple Silicon, y si dice «Procesador Intel», es Intel. La app empieza en el plan gratis (hasta 50 contraseñas).
 
 > [!CAUTION]
 > **CipherVault está en beta.** Puede tener errores, cambiar sin aviso o perder datos. No la uses para guardar tus contraseñas reales ni la instales en equipos de trabajo hasta que salga la versión estable.
@@ -81,6 +81,7 @@ En Mac no está Windows Hello; todo lo demás funciona igual (bóveda, 2FA, sinc
 - `CipherVault.spec`: especificación de PyInstaller (se niega a compilar si el JSON trae claves de developer).
 - `run.ps1`: ejecuta la app desde código fuente (modo desarrollo).
 - `GUIA_ACTIVACION_MAKE.md`: configuración de Wompi → Make (códigos de un solo uso).
+- `packaging/notas_version.md`: novedades que se publican con cada versión (edítalo antes de crear la etiqueta).
 - `tests/`: pruebas automáticas (`pytest`).
 - `Assets/`: logos e íconos que se empaquetan en el `.exe`.
 - `docs/`: capturas e ícono del README.
@@ -128,8 +129,8 @@ No distribuyas: `.env`, `developer.license`, `dev_credentials.json`, `desktop_ru
 
 Los enlaces de *Descargar* apuntan siempre a la última versión publicada en Releases (las *pre-release* no cuentan como «última»), con nombres de archivo fijos.
 
-1. Sube `APP_VERSION` en `Gestor_contrasenas_secure.py` (por ejemplo a `3.2.0`) y haz *Commit and Push* en PyCharm.
-2. Crea la etiqueta en PyCharm (*Git > New Tag*): `v3.2.0` para una versión definitiva, o `v3.2.0-beta` (con guion) para una pre-release.
+1. Sube `APP_VERSION` en `Gestor_contrasenas_secure.py` (por ejemplo a `3.4.0`), escribe las novedades en `packaging/notas_version.md` y haz *Commit and Push* en PyCharm.
+2. Crea la etiqueta en PyCharm (*Git > New Tag*): `v3.4.0` para una versión definitiva, o `v3.4.0-beta` (con guion) para una pre-release.
 3. Súbela: *Git > Push*, con la casilla **Push tags** marcada.
 
 GitHub Actions crea el release y le sube el instalador de Windows y las dos versiones de macOS (Apple Silicon e Intel). Si la etiqueta no coincide con `APP_VERSION`, se detiene sin compilar. También sigue funcionando publicar un release desde la web de GitHub.
@@ -162,7 +163,7 @@ Ya no hay período de prueba: se empieza en el plan gratis (50 contraseñas, sin
 
 ## Datos locales
 
-`%LOCALAPPDATA%\CipherVault`: `passwords.db`, `app_config.json`, `install_date.txt`, `ciphervault.log` y la carpeta `backups` (últimos 5 respaldos cifrados, plan premium).
+`%LOCALAPPDATA%\CipherVault`: `passwords.db`, `app_config.json`, `ciphervault.log` y la carpeta `backups` (últimos 5 respaldos cifrados, plan premium).
 
 **Windows Hello:** la clave de la bóveda se guarda cifrada con una clave derivada de la firma que hace Windows Hello (clave RSA en el TPM del equipo, protegida por huella/rostro/PIN) sobre un reto aleatorio, y además protegida con DPAPI. Sin Windows Hello, en otro equipo u otra cuenta de Windows no se puede abrir. Cambiar la contraseña maestra lo desactiva.
 
@@ -171,7 +172,6 @@ Ya no hay período de prueba: se empieza en el plan gratis (50 contraseñas, sin
 - **Una sola derivación de clave por inicio de sesión.** PBKDF2-HMAC-SHA256 a 600.000 iteraciones produce la clave de la bóveda, y la contraseña maestra se verifica con un HMAC de esa clave (formato `v3$`). Así no se guarda ni la clave ni un hash reutilizable, y las cuentas de formatos anteriores se migran solas al entrar.
 - **Licencias que no se pueden compartir.** Cada pago genera un código aleatorio del que el servidor solo guarda el hash. El código se liga a los equipos que lo canjean, hasta 3 (identificador derivado del `MachineGuid` de Windows), y la respuesta viene firmada con un *nonce* para que no se pueda reutilizar en otro equipo. El plan guardado en la base local lleva un sello HMAC atado al equipo, con una clave derivada del secreto de activación (que no está en este repositorio).
 - **El `.exe` no se puede convertir en modo desarrollador.** `CipherVault.spec` se niega a compilar si la configuración trae credenciales de desarrollador, y la app compilada ignora variables de entorno, `.env` y archivos JSON sueltos.
-- **Prueba gratuita difícil de reiniciar.** La fecha de inicio se guarda en tres sitios (archivo, base de datos y registro de Windows) y la app detecta si se atrasa el reloj.
 - **84 pruebas automáticas**, incluidas pruebas de humo de la interfaz real con Tk que corren sin pantalla (Xvfb). Windows Hello y la auto-escritura se prueban con dobles (la parte que depende del hardware se prueba a mano en Windows).
 
 ## Soporte

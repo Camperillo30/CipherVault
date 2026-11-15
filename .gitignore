@@ -85,3 +85,5 @@ Thumbs.db
 *.tar.bz2
 *.tar.xz
 *.tar.zst
+# Notas que genera el flujo de publicación
+notas.md
