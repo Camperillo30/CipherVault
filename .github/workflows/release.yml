@@ -3,7 +3,9 @@
 # Se ejecuta al subir una etiqueta desde PyCharm (Git > New Tag "v3.2.0" y Push con "Push tags"),
 # al PUBLICAR un release desde la web de GitHub (también si es pre-release) o a mano, y sube:
 #   - CipherVault-Setup.exe        instalador de Windows (build.ps1 + Inno Setup)
-#   - CipherVault-macOS.zip        la app de macOS (CipherVault.app)
+#   - CipherVault-macOS-AppleSilicon.zip   la app de macOS para Mac con Apple Silicon (M1 o posterior)
+#   - CipherVault-macOS-Intel.zip          la app de macOS para Mac con Intel
+#   (PyInstaller no compila para otra arquitectura, por eso hay un runner de Mac por cada una.)
 # Con etiqueta: tiene que coincidir con APP_VERSION de Gestor_contrasenas_secure.py. "v3.2.0" crea
 # una versión definitiva; "v3.2.0-beta" (con guion), una pre-release.
 # También se puede lanzar a mano: Actions → Release → Run workflow (con la etiqueta de un release).
@@ -66,7 +68,8 @@ jobs:
             echo "| Sistema | Archivo |"
             echo "| --- | --- |"
             echo "| **Windows 10 u 11** (instalador) | \`CipherVault-Setup.exe\` |"
-            echo "| **Mac** (macOS 11 o superior, chip Apple M1 o más nuevo) | \`CipherVault-macOS.zip\` |"
+            echo "| **Mac con Apple Silicon** (M1 o posterior, macOS 11 o superior) | \`CipherVault-macOS-AppleSilicon.zip\` |"
+            echo "| **Mac con Intel** (macOS 11 o superior) | \`CipherVault-macOS-Intel.zip\` |"
             echo
             echo "Los archivos aparecen aquí unos minutos después de publicar, cuando GitHub termina de compilarlos."
             echo
@@ -119,7 +122,15 @@ jobs:
   macos:
     needs: preparar
     if: needs.preparar.outputs.seguir == 'true'
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest      # arm64
+            nombre: AppleSilicon
+          - runner: macos-15-intel    # x86_64
+            nombre: Intel
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -152,5 +163,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ditto -c -k --sequesterRsrc --keepParent dist/CipherVault.app CipherVault-macOS.zip
-          gh release upload "$TAG" CipherVault-macOS.zip --clobber --repo "$GITHUB_REPOSITORY"
+          echo "Arquitectura: $(uname -m) -> $(lipo -archs dist/CipherVault.app/Contents/MacOS/CipherVault)"
+          ZIP="CipherVault-macOS-${{ matrix.nombre }}.zip"
+          ditto -c -k --sequesterRsrc --keepParent dist/CipherVault.app "$ZIP"
+          gh release upload "$TAG" "$ZIP" --clobber --repo "$GITHUB_REPOSITORY"

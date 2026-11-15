@@ -17,9 +17,10 @@
 | Sistema | Descarga |
 | --- | --- |
 | Windows 10 u 11 | [CipherVault-Setup.exe](https://github.com/Camperillo30/CipherVault/releases/latest/download/CipherVault-Setup.exe) |
-| Mac con Apple Silicon (M1 o posterior), macOS 11 o superior | [CipherVault-macOS.zip](https://github.com/Camperillo30/CipherVault/releases/latest/download/CipherVault-macOS.zip) |
+| Mac con Apple Silicon (M1 o posterior) | [CipherVault-macOS-AppleSilicon.zip](https://github.com/Camperillo30/CipherVault/releases/latest/download/CipherVault-macOS-AppleSilicon.zip) |
+| Mac con Intel | [CipherVault-macOS-Intel.zip](https://github.com/Camperillo30/CipherVault/releases/latest/download/CipherVault-macOS-Intel.zip) |
 
-Todas las versiones y sus novedades están en [Releases](https://github.com/Camperillo30/CipherVault/releases). Mientras solo haya versiones de prueba (*pre-release*), como la 3.3.0-beta, estos enlaces no funcionan: descarga desde [la versión 3.3.0-beta](https://github.com/Camperillo30/CipherVault/releases/tag/v3.3.0-beta). La app empieza en el plan gratis (hasta 50 contraseñas).
+Todas las versiones y sus novedades están en [Releases](https://github.com/Camperillo30/CipherVault/releases). Mientras solo haya versiones de prueba (*pre-release*), como la 3.3.0-beta, estos enlaces no funcionan: descarga desde [la versión 3.3.0-beta](https://github.com/Camperillo30/CipherVault/releases/tag/v3.3.0-beta). En Mac se necesita macOS 11 o superior; para saber cuál descargar, abre el menú Apple → *Acerca de este Mac*: si dice «Chip Apple M…» es Apple Silicon, y si dice «Procesador Intel», es Intel. La app empieza en el plan gratis (hasta 50 contraseñas).
 
 > [!CAUTION]
 > **CipherVault está en beta.** Puede tener errores, cambiar sin aviso o perder datos. No la uses para guardar tus contraseñas reales ni la instales en equipos de trabajo hasta que salga la versión estable.
@@ -74,7 +75,7 @@ En Mac no está Windows Hello; todo lo demás funciona igual (bóveda, 2FA, sinc
 - `cv_extras.py`: importar/exportar CSV, códigos 2FA y verificación en dos pasos al entrar, kit de emergencia en PDF, auto-escritura y Windows Hello.
 - `cv_sync.py`: sincronización por carpeta (`.cvsync`) y bóveda de equipo (`.cvteam`, claves X25519).
 - `installer/CipherVault.iss`: instalador de Windows (Inno Setup 6 o 7), lo compila `build.ps1`.
-- `.github/workflows/release.yml` (con `CipherVault-mac.spec`): al subir una etiqueta `v*` desde PyCharm (o al publicar un release en GitHub), GitHub Actions compila el instalador de Windows y la app de macOS (`CipherVault-macOS.zip`). Necesita los secretos `CIPHERVAULT_ACTIVATION_URL` y `CIPHERVAULT_ACTIVATION_SECRET` en *Settings → Secrets and variables → Actions*.
+- `.github/workflows/release.yml` (con `CipherVault-mac.spec`): al subir una etiqueta `v*` desde PyCharm (o al publicar un release en GitHub), GitHub Actions compila el instalador de Windows y la app de macOS para Apple Silicon e Intel (`CipherVault-macOS-AppleSilicon.zip` y `CipherVault-macOS-Intel.zip`). Necesita los secretos `CIPHERVAULT_ACTIVATION_URL` y `CIPHERVAULT_ACTIVATION_SECRET` en *Settings → Secrets and variables → Actions*.
 - `Main.py`: punto de entrada; registra los errores de arranque en el log.
 - `build.ps1`: crea el entorno, genera `desktop_runtime_config.json` (sin nada de developer) y compila `dist\CipherVault.exe`.
 - `CipherVault.spec`: especificación de PyInstaller (se niega a compilar si el JSON trae claves de developer).
@@ -131,7 +132,7 @@ Los enlaces de *Descargar* apuntan siempre a la última versión publicada en Re
 2. Crea la etiqueta en PyCharm (*Git > New Tag*): `v3.2.0` para una versión definitiva, o `v3.2.0-beta` (con guion) para una pre-release.
 3. Súbela: *Git > Push*, con la casilla **Push tags** marcada.
 
-GitHub Actions crea el release y le sube el instalador de Windows y la app de macOS. Si la etiqueta no coincide con `APP_VERSION`, se detiene sin compilar. También sigue funcionando publicar un release desde la web de GitHub.
+GitHub Actions crea el release y le sube el instalador de Windows y las dos versiones de macOS (Apple Silicon e Intel). Si la etiqueta no coincide con `APP_VERSION`, se detiene sin compilar. También sigue funcionando publicar un release desde la web de GitHub.
 
 ## Seguridad (resumen)
 
