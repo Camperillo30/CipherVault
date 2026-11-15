@@ -1,3 +1,5 @@
+import hashlib
+import hmac
 import json
 import os
 import subprocess
@@ -574,6 +576,31 @@ def test_paquetes_de_equipo():
     assert [p["precio_cop"] for p in gcs.TEAM_PLANES.values()] == [24900, 37900, 64900, 199900]
     assert [p["usuarios"] for p in gcs.TEAM_PLANES.values()] == [3, 5, 10, None]
     assert all(p["plan"] == "equipo" for p in gcs.TEAM_PLANES.values())
+
+# ───────────── sello ligado al secreto de activación (15-nov-2026) ─────────────
+def test_sello_con_la_clave_publica_antigua_no_sirve(app, make):
+    """El repositorio es público: un sello fabricado con la clave fija que estaba en el código
+    no debe dar el plan. Solo vale el sello derivado del secreto de activación."""
+    make.add(plan="premium", meses="1200", ref="R-SELLO")
+    make_user(app)
+    LAM.redeem(CODE, "ana", "ana@example.com")
+    with gcs.db() as conn:
+        user = gcs.get_user_by_name(conn, "ana")
+    assert gcs.compute_effective_version(user)[::2] == ("premium", "ok")
+    msg = f"{user['id']}|premium|{user['license_expiry']}|{gcs.machine_id()}".encode("utf-8")
+    forged = hmac.new(b"CipherVault/license-seal/v1/S.C.A/2026" + user["vault_salt"].encode("ascii"),
+                      msg, hashlib.sha256).hexdigest()
+    with gcs.db() as conn:
+        conn.execute("UPDATE users SET license_seal=? WHERE id=?", (forged, user["id"]))
+        user = gcs.get_user_by_name(conn, "ana")
+    assert gcs.compute_effective_version(user)[::2] == ("free", "tampered")
+
+
+def test_sello_depende_del_secreto(monkeypatch):
+    a = gcs.license_seal(1, "premium", "2030-01-01T00:00:00", "sal", machine="pc")
+    monkeypatch.setattr(gcs, "ACTIVATION_SECRET", "otro-secreto")
+    b = gcs.license_seal(1, "premium", "2030-01-01T00:00:00", "sal", machine="pc")
+    assert a != b
 
 
 def test_links_viejos_de_equipo_no_se_usan(monkeypatch):

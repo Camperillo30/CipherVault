@@ -625,10 +625,25 @@ def dec_text(vault: Fernet, value) -> str:
 
 # ── Sello de la licencia guardada en la base de datos local ───────
 # Evita el "editar una celda": cambiar plan/vencimiento con un editor de SQLite
-# invalida el sello y la cuenta vuelve a gratis. Es tamper-evidence, no
-# secreto: quien desensamble el .exe podría reproducirlo. La protección real
+# invalida el sello y la cuenta vuelve a gratis. La clave del sello se deriva del
+# secreto de activación (CIPHERVAULT_ACTIVATION_SECRET), que va embebido en el .exe
+# y NUNCA está en el repositorio: como el código es público, una clave fija escrita
+# aquí permitiría a cualquiera fabricar un sello válido con un script. Sigue siendo
+# un freno (quien desensamble el .exe podría sacar el secreto); la protección real
 # es que el plan solo se otorga canjeando un código de un solo uso, atado al equipo.
-_SEAL_KEY = b"CipherVault/license-seal/v1/S.C.A/2026"
+# Los sellos hechos con la clave fija anterior dejan de valer: la app los trata como
+# "tampered" y la auto-reparación los vuelve a pedir a Make (necesita activation_hash).
+_SEAL_LABEL = b"ciphervault/license-seal/v2"
+_SEAL_KEY_SIN_SECRETO = b"CipherVault/license-seal/v1/S.C.A/2026"   # solo sin secreto (código fuente sin .env)
+
+
+def _seal_base_key() -> bytes:
+    """Clave base del sello: HMAC del secreto de activación. Sin secreto configurado (ejecución
+    desde código fuente sin .env, donde además no se puede canjear nada) usa la clave fija antigua."""
+    secret = ACTIVATION_SECRET or ""
+    if not secret:
+        return _SEAL_KEY_SIN_SECRETO
+    return hmac.new(secret.encode("utf-8"), _SEAL_LABEL, hashlib.sha256).digest()
 
 
 _MACHINE_ID_CACHE: str | None = None
@@ -676,7 +691,7 @@ def license_seal(user_id, version, expiry, vault_salt, machine: str | None = Non
     copiar passwords.db a otra PC invalida la licencia."""
     machine = machine if machine is not None else machine_id()
     msg = f"{user_id}|{version or ''}|{expiry or ''}|{machine}".encode("utf-8")
-    key = _SEAL_KEY + (vault_salt or "").encode("ascii", "ignore")
+    key = _seal_base_key() + (vault_salt or "").encode("ascii", "ignore")
     return hmac.new(key, msg, hashlib.sha256).hexdigest()
 
 
