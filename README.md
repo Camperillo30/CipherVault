@@ -14,13 +14,7 @@
 
 ## Descargar
 
-| Sistema | Descarga |
-| --- | --- |
-| Windows 10 u 11 | [CipherVault-Setup.exe](https://github.com/Camperillo30/CipherVault/releases/latest/download/CipherVault-Setup.exe) |
-| Mac con Apple Silicon (M1 o posterior) | [CipherVault-macOS-AppleSilicon.zip](https://github.com/Camperillo30/CipherVault/releases/latest/download/CipherVault-macOS-AppleSilicon.zip) |
-| Mac con Intel | [CipherVault-macOS-Intel.zip](https://github.com/Camperillo30/CipherVault/releases/latest/download/CipherVault-macOS-Intel.zip) |
-
-Todas las versiones y sus novedades están en [Releases](https://github.com/Camperillo30/CipherVault/releases). Mientras solo haya versiones de prueba (*pre-release*), como la 3.3.1-beta, estos enlaces no funcionan: descarga desde [la versión 3.3.1-beta](https://github.com/Camperillo30/CipherVault/releases/tag/v3.3.1-beta). En Mac se necesita macOS 11 o superior; para saber cuál descargar, abre el menú Apple → *Acerca de este Mac*: si dice «Chip Apple M…» es Apple Silicon, y si dice «Procesador Intel», es Intel. La app empieza en el plan gratis (hasta 50 contraseñas).
+**Por ahora CipherVault está en etapa de pruebas y todavía no se puede descargar.** Cuando salga la versión estable, aquí estarán los instaladores para Windows 10/11 y para Mac (Apple Silicon e Intel, macOS 11 o superior). ¿Quieres saber cuándo sale? Escribe por [WhatsApp](https://wa.me/573054139394) o a `ciphervaultpass@gmail.com`.
 
 > [!CAUTION]
 > **CipherVault está en beta.** Puede tener errores, cambiar sin aviso o perder datos. No la uses para guardar tus contraseñas reales ni la instales en equipos de trabajo hasta que salga la versión estable.
