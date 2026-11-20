@@ -2128,42 +2128,75 @@ class CipherVaultApp:
     #  PANTALLA DE LOGIN — limpia y simple
     # ─────────────────────────────────────────
     def show_login(self):
-        """Dibuja la pantalla de inicio de sesión / registro: logo, formulario de usuario, email y contraseña maestra, botón de compra de plan y accesos secundarios (licencia, dev panel, salir)."""
+        """Dibuja la pantalla de inicio de sesión / registro: logo, formulario de usuario, email y contraseña maestra, botón de compra de plan y accesos secundarios (licencia, dev panel, salir).
+
+        La pantalla se adapta al alto real de la ventana: el pie con el copyright va en su
+        propia franja abajo (el formulario nunca lo tapa), y si el contenido no cabe se
+        compacta en dos pasos (menos espacios, luego sin el candado ni el subtítulo). Si aun
+        así no cabe, aparece una barra de desplazamiento."""
         self._clear()
         self._setup_styles()
 
         outer = tk.Frame(self.root, bg=C["bg"])
         outer.pack(expand=True, fill="both")
 
-        # pie de pantalla: logo + copyright juntos, siempre abajo
+        # ── pie de pantalla: logo + copyright, en su propia franja abajo ──
         footer = tk.Frame(outer, bg=C["bg"])
-        footer.pack(side="bottom", pady=10)
+        footer.pack(side="bottom", fill="x", pady=(self._s(4), self._s(10)))
+        footer_inner = tk.Frame(footer, bg=C["bg"])
+        footer_inner.pack()
 
+        footer_logo_w = 0
         footer_logo_path = get_asset_path("icono_footer.png")
         if footer_logo_path:
             try:
                 self._login_footer_logo_img = tk.PhotoImage(file=footer_logo_path)
-                tk.Label(footer, image=self._login_footer_logo_img,
+                footer_logo_w = self._login_footer_logo_img.width() + 6
+                tk.Label(footer_inner, image=self._login_footer_logo_img,
                          bg=C["bg"]).pack(side="left", padx=(0, 6))
             except Exception:
                 pass
-        tk.Label(footer, text=APP_COPYRIGHT_TEXT, font=("Segoe UI", 8),
-                 bg=C["bg"], fg=C["muted"], justify="left",
-                 wraplength=self.screen_width - 100).pack(side="left")
+        copyright_lbl = tk.Label(footer_inner, text=APP_COPYRIGHT_TEXT, font=("Segoe UI", 8),
+                                 bg=C["bg"], fg=C["muted"], justify="left",
+                                 wraplength=max(200, self.screen_width - 100 - footer_logo_w))
+        copyright_lbl.pack(side="left")
 
-        col = tk.Frame(outer, bg=C["bg"])
-        col.place(relx=0.5, rely=0.5, anchor="center")
+        def _wrap_footer(event):
+            # El texto se parte según el ancho real de la ventana, no el de la pantalla.
+            wrap = max(200, min(event.width - footer_logo_w - self._s(40), self._s(1100)))
+            if int(copyright_lbl.cget("wraplength")) != wrap:
+                copyright_lbl.config(wraplength=wrap)
+        footer.bind("<Configure>", _wrap_footer, "+")
+
+        # ── zona del formulario: ocupa el resto, centrada, con desplazamiento si hace falta ──
+        body = tk.Frame(outer, bg=C["bg"])
+        body.pack(side="top", fill="both", expand=True)
+        canvas = tk.Canvas(body, bg=C["bg"], highlightthickness=0, bd=0)
+        vbar = ttk.Scrollbar(body, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vbar.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        col = tk.Frame(canvas, bg=C["bg"])
+        col_item = canvas.create_window(0, 0, window=col, anchor="n")
+        self._login_canvas = canvas
+        self._login_col = col
+
+        # Espacios que cambian según el alto disponible: (normal, compacto, mínimo)
+        spaced: list[tuple[tk.Misc, tuple]] = []
+
+        def gap(widget, normal, compact, tight):
+            spaced.append((widget, (normal, compact, tight)))
 
         # icono + titulo
         logo_frame = tk.Frame(col, bg=C["bg"])
         logo_frame.pack()
 
-        self._label(logo_frame, "\U0001F512", font_size=56).pack()
-
-        self._label(logo_frame, "CipherVault", font_size=28, bold=True,
-                    color=C["primary"]).pack(pady=(4, 0))
-        self._label(logo_frame, "Gestor de contraseñas seguras",
-                    color=C["muted"]).pack(pady=(0, 8))
+        lock_lbl = self._label(logo_frame, "\U0001F512", font_size=56)
+        lock_lbl.pack()
+        title_lbl = self._label(logo_frame, "CipherVault", font_size=28, bold=True,
+                                color=C["primary"])
+        title_lbl.pack(pady=(4, 0))
+        subtitle_lbl = self._label(logo_frame, "Gestor de contraseñas seguras", color=C["muted"])
+        subtitle_lbl.pack(pady=(0, 8))
 
         # badge de estado (solo si aplica)
         if self.is_developer:
@@ -2172,21 +2205,25 @@ class CipherVaultApp:
         # formulario
         form = self._card(col, padx=32, pady=28)
         form.pack(pady=20, ipadx=10)
+        gap(form, 20, 10, 6)
 
         self._label(form, "Usuario", bold=True, color=C["muted"]).pack(anchor="w", pady=(0, 4))
         self.entry_user = ttk.Entry(form, width=28, font=("Segoe UI", 12))
         self.entry_user.pack(fill="x", pady=(0, 14))
+        gap(self.entry_user, (0, 14), (0, 8), (0, 4))
 
         self._label(form, "Email (para crear cuenta y activar tu plan)",
                     bold=True, color=C["muted"]).pack(anchor="w", pady=(0, 4))
         self.entry_email = ttk.Entry(form, width=28, font=("Segoe UI", 12))
         self.entry_email.pack(fill="x", pady=(0, 14))
+        gap(self.entry_email, (0, 14), (0, 8), (0, 4))
 
         self._label(form, "Contraseña maestra", bold=True, color=C["muted"]).pack(anchor="w", pady=(0, 4))
 
         pwd_row = tk.Frame(form, bg=C["card"])
         pwd_row.pack(fill="x", pady=(0, 22))
-        self.entry_pass = ttk.Entry(pwd_row, show="\u2022", font=("Segoe UI", 12))
+        gap(pwd_row, (0, 22), (0, 12), (0, 8))
+        self.entry_pass = ttk.Entry(pwd_row, show="•", font=("Segoe UI", 12))
         self.entry_pass.pack(side="left", fill="x", expand=True)
         self._vis_btn = tk.Button(pwd_row, text="\U0001F441",
                                   command=self._toggle_login_pass,
@@ -2201,28 +2238,129 @@ class CipherVaultApp:
         self._btn(row, "Iniciar sesión", self._login, "Primary.TButton").pack(side="left", padx=4)
         self._btn(row, "Crear cuenta",   self._register).pack(side="left", padx=4)
         if self._hello_users():
-            self._btn(form, "🪟 Entrar con Windows Hello", self._login_hello).pack(fill="x", pady=(12, 0))
+            hello_btn = self._btn(form, "🪟 Entrar con Windows Hello", self._login_hello)
+            hello_btn.pack(fill="x", pady=(12, 0))
+            gap(hello_btn, (12, 0), (8, 0), (6, 0))
 
         # ── Un unico boton de planes, claro y directo ──
         plan_btn_row = tk.Frame(col, bg=C["bg"])
         plan_btn_row.pack(pady=(4, 12))
+        gap(plan_btn_row, (4, 12), (0, 8), (0, 6))
 
+        plan_btn = None
         if not self.is_developer:
-            tk.Button(plan_btn_row,
-                      text="\U0001F48E  Comprar plan",
-                      command=self._show_plans_screen,
-                      bg=C["wompi"], fg="#ffffff",
-                      font=("Segoe UI", 12, "bold"),
-                      relief="flat", padx=24, pady=10,
-                      cursor="hand2").pack()
+            plan_btn = tk.Button(plan_btn_row,
+                                 text="\U0001F48E  Comprar plan",
+                                 command=self._show_plans_screen,
+                                 bg=C["wompi"], fg="#ffffff",
+                                 font=("Segoe UI", 12, "bold"),
+                                 relief="flat", padx=24, pady=10,
+                                 cursor="hand2")
+            plan_btn.pack()
 
         # botones secundarios, discretos
         row2 = tk.Frame(col, bg=C["bg"])
-        row2.pack()
+        row2.pack(pady=(0, 4))
         if self.is_developer:
             self._btn(row2, "Dev Panel", self._show_dev_panel, "Dev.TButton").pack(side="left", padx=4)
         self._btn(row2, "Mi licencia", self._show_license_info).pack(side="left", padx=4)
         self._btn(row2, "Salir", self.root.quit, "Danger.TButton").pack(side="left", padx=4)
+
+        def apply_density(level: int):
+            """0 = normal, 1 = compacto, 2 = mínimo (sin candado ni subtítulo)."""
+            def px(value):
+                return tuple(self._s(v) for v in value) if isinstance(value, tuple) else self._s(value)
+            if level < 2:
+                if not lock_lbl.winfo_manager():
+                    lock_lbl.pack(before=title_lbl)
+                if not subtitle_lbl.winfo_manager():
+                    subtitle_lbl.pack(after=title_lbl, pady=(0, 8))
+                lock_lbl.config(font=("Segoe UI", 56 if level == 0 else 36))
+                subtitle_lbl.pack_configure(pady=(0, 8 if level == 0 else 4))
+            else:
+                lock_lbl.pack_forget()
+                subtitle_lbl.pack_forget()
+            title_lbl.config(font=("Segoe UI", 28 if level == 0 else 22, "bold"))
+            form.config(padx=self._s((32, 26, 20)[level]), pady=self._s((28, 18, 12)[level]))
+            if plan_btn is not None:
+                plan_btn.config(pady=(10, 7, 5)[level])
+            for widget, values in spaced:
+                widget.pack_configure(pady=px(values[level]))
+
+        state = {"height": None, "busy": False}
+
+        def relayout(_event=None):
+            """Elige la densidad que cabe en el alto visible y centra el formulario;
+            si ni la más compacta cabe, deja el formulario arriba y muestra la barra."""
+            if state["busy"]:
+                return
+            state["busy"] = True
+            try:
+                ch, cw = canvas.winfo_height(), canvas.winfo_width()
+                if ch <= 1:
+                    return
+                if ch != state["height"]:
+                    state["height"] = ch
+                    for level in range(3):
+                        apply_density(level)
+                        col.update_idletasks()
+                        if col.winfo_reqheight() <= ch:
+                            break
+                rh = col.winfo_reqheight()
+                fits = rh <= ch
+                canvas.coords(col_item, cw // 2, (ch - rh) // 2 if fits else 0)
+                canvas.configure(scrollregion=(0, 0, cw, max(rh, ch)))
+                if fits and vbar.winfo_ismapped():
+                    vbar.pack_forget()
+                    canvas.yview_moveto(0)
+                elif not fits and not vbar.winfo_ismapped():
+                    vbar.pack(side="right", fill="y", before=canvas)
+            except tk.TclError:
+                pass
+            finally:
+                state["busy"] = False
+
+        canvas.bind("<Configure>", relayout, "+")
+        col.bind("<Configure>", relayout, "+")
+
+        # rueda del ratón solo cuando hay barra (Windows, macOS y Linux)
+        def on_wheel(event):
+            try:
+                if not canvas.winfo_exists() or not vbar.winfo_ismapped():
+                    return
+            except tk.TclError:
+                return
+            if getattr(event, "num", None) in (4, 5):
+                canvas.yview_scroll(-1 if event.num == 4 else 1, "units")
+                return
+            delta = event.delta if sys.platform == "darwin" else event.delta / 120
+            canvas.yview_scroll(int(-delta) or (-1 if event.delta > 0 else 1), "units")
+
+        def wheel(on: bool):
+            try:
+                if on:
+                    for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                        body.bind_all(seq, on_wheel)
+                else:
+                    for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                        body.unbind_all(seq)
+            except tk.TclError:
+                pass
+
+        def on_leave(_event):
+            # Al pasar a un widget hijo (un campo, un botón) Tk también avisa «salida»:
+            # solo se suelta la rueda si el puntero de verdad salió de la zona.
+            try:
+                x, y = body.winfo_pointerxy()
+                inside = body.winfo_containing(x, y)
+                if inside is not None and str(inside).startswith(str(body)):
+                    return
+            except (tk.TclError, KeyError):
+                pass
+            wheel(False)
+
+        body.bind("<Enter>", lambda _e: wheel(True))
+        body.bind("<Leave>", on_leave)
 
         self.entry_pass.bind("<Return>", lambda _: self._login())
         if self.is_developer:
