@@ -11,8 +11,8 @@
 #  Uso:  .\run.ps1
 # ============================================================
 param(
-    [string]$PythonVersion = "3.11",
-    [string]$VenvPath = ".venv311"
+    [string]$PythonVersion = "3.12",
+    [string]$VenvPath = ".venv312"
 )
 
 $ErrorActionPreference = "Stop"

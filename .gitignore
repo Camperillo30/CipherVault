@@ -16,6 +16,7 @@ target/
 # Dependencies
 .venv/
 .venv311/
+.venv312/
 venv/
 node_modules/
 .mypy_cache/

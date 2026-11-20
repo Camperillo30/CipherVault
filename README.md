@@ -5,7 +5,7 @@
 <h1 align="center">CipherVault</h1>
 
 <p align="center">
-  Gestor de contraseñas de escritorio para <b>Windows</b> y <b>macOS</b> (Python 3.11 + Tkinter). Los datos viven cifrados en una base SQLite local y la app se genera con PyInstaller.<br>
+  Gestor de contraseñas de escritorio para <b>Windows</b> y <b>macOS</b> (Python 3.12 + Tkinter). Los datos viven cifrados en una base SQLite local y la app se genera con PyInstaller.<br>
   Pensado para usuarios y pymes en Colombia, con licencias por plan.<br>
   <a href="https://claude.ai/artifact/CE3mjxkr9kbVoju1Jr2SFo">Sitio web</a>
 </p>

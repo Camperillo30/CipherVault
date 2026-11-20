@@ -14,7 +14,7 @@
 #       código fuente nunca contiene keys ni URLs reales).
 #    4. Busca una instalación de Python utilizable (venv del proyecto,
 #       venv ya activo, Python Launcher, o python del PATH) y crea el
-#       entorno virtual .venv311 si hace falta.
+#       entorno virtual .venv312 si hace falta.
 #    5. Instala las dependencias de requirements-desktop.txt.
 #    6. Ejecuta PyInstaller con CipherVault.spec y genera dist\CipherVault.exe.
 #    7. Si hay un certificado de firma de código configurado, firma el .exe
@@ -25,8 +25,8 @@
 #  Uso:  .\build.ps1   (o  .\build.ps1 -PythonVersion 3.12,  .\build.ps1 -SkipInstaller)
 # ============================================================
 param(
-    [string]$PythonVersion = "3.11",
-    [string]$VenvPath = ".venv311",
+    [string]$PythonVersion = "3.12",
+    [string]$VenvPath = ".venv312",
     [switch]$SkipInstaller
 )
 
@@ -192,7 +192,7 @@ if ($leaked.Count -gt 0) {
     throw "desktop_runtime_config.json contiene claves de desarrollador ($($leaked -join ', ')). Build cancelado."
 }
 
-# Prueba si un comando de Python (ruta directa, o "py -3.11") realmente
+# Prueba si un comando de Python (ruta directa, o "py -3.12") realmente
 # funciona en este equipo, antes de confiar en él.
 function Test-PythonWorks {
     param([string[]]$Command)
