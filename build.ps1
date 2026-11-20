@@ -220,9 +220,31 @@ function Resolve-PythonExecutable {
 
     $venvPython = Join-Path $PWD "$ProjectVenvPath\Scripts\python.exe"
 
-    # 1. Ya existe un venv completo del proyecto -> usarlo directo, no crear nada
+    # 1. Ya existe un venv del proyecto -> usarlo directo si funciona.
+    #    Un venv no trae Python propio: apunta al Python con que se creo. Si ese
+    #    Python se desinstalo o se actualizo, el python.exe del venv sigue ahi
+    #    pero falla con "No Python at ...". En ese caso se borra y se recrea.
     if (Test-Path $venvPython) {
-        return [PSCustomObject]@{ Command = @($venvPython); NeedsVenvCreation = $false }
+        if (Test-PythonWorks -Command @($venvPython)) {
+            return [PSCustomObject]@{ Command = @($venvPython); NeedsVenvCreation = $false }
+        }
+
+        $baseHome = $null
+        $cfgPath = Join-Path $PWD "$ProjectVenvPath\pyvenv.cfg"
+        if (Test-Path $cfgPath) {
+            $homeLine = Get-Content $cfgPath | Where-Object { $_ -match '^\s*home\s*=' } | Select-Object -First 1
+            if ($homeLine) { $baseHome = ($homeLine -split '=', 2)[1].Trim() }
+        }
+        Write-Warning "El entorno virtual $ProjectVenvPath esta roto: el Python con que se creo ya no existe."
+        if ($baseHome) { Write-Warning "Apuntaba a: $baseHome" }
+        Write-Warning "Eliminandolo para recrearlo con el Python que haya instalado ahora..."
+        try {
+            Remove-Item (Join-Path $PWD $ProjectVenvPath) -Recurse -Force -ErrorAction Stop
+        } catch {
+            throw "No se pudo borrar el entorno virtual roto $ProjectVenvPath.`n" +
+                  "Cierra PyCharm (o cualquier programa que lo este usando) y borra la carpeta a mano:`n" +
+                  "  Remove-Item -Recurse -Force $ProjectVenvPath"
+        }
     }
 
     # 2. Si ya hay un venv activo en esta sesion (ej. el .venv de PyCharm),
@@ -291,8 +313,13 @@ if ($resolved.NeedsVenvCreation) {
 
 # Instala/actualiza pip y las dependencias de escritorio (cryptography,
 # pyinstaller) dentro del entorno virtual resuelto arriba.
+if (-not (Test-PythonWorks -Command @($venvPython))) {
+    throw "El Python del entorno virtual $VenvPath no arranca (no es un problema de internet).`n" +
+          "Borra la carpeta y vuelve a correr el script:  Remove-Item -Recurse -Force $VenvPath ; .\build.ps1"
+}
+
 & $venvPython -m pip install --upgrade pip
-if ($LASTEXITCODE -ne 0) { throw "Fallo 'pip install --upgrade pip'. Revisa tu conexion a internet o el entorno virtual." }
+if ($LASTEXITCODE -ne 0) { throw "Fallo 'pip install --upgrade pip' (Python si funciona). Revisa tu conexion a internet o el proxy." }
 
 & $venvPython -m pip install -r requirements-desktop.txt
 if ($LASTEXITCODE -ne 0) { throw "Fallo la instalacion de requirements-desktop.txt. Revisa el mensaje de pip arriba." }
