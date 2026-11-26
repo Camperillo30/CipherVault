@@ -22,9 +22,6 @@
 
 ¿Dudas? Escribe por [WhatsApp](https://wa.me/573054139394) o a `ciphervaultpass@gmail.com`.
 
-> [!CAUTION]
-> **CipherVault está en beta.** Puede tener errores, cambiar sin aviso o perder datos. No la uses para guardar tus contraseñas reales ni la instales en equipos de trabajo hasta que salga la versión estable.
-
 <details>
 <summary><b>Windows dice «Windows protegió su PC»</b></summary>
 
